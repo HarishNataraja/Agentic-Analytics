@@ -1,7 +1,7 @@
 // Fix: Import `LiveServerMessage` and `Blob` instead of `LiveSession` and `LiveSessionCallbacks`.
 import { GoogleGenAI, GenerateContentResponse, Modality, LiveServerMessage, Type, Blob, GenerationConfig, FunctionDeclaration, Image } from "@google/genai";
 // Fix: Import AIStudio from the central types file.
-import { AspectRatio, Presentation, SlideTransition, TextContent, AIStudio } from "../types";
+import { AspectRatio, Presentation, SlideTransition, TextContent, ObjectAnimation } from "../types";
 
 // This is a browser-only app, so we can't use process.env.
 // The user will be prompted to provide their key for video generation.
@@ -44,7 +44,8 @@ export const createBlankPresentation = (): Presentation => ({
             flipX: false,
             flipY: false,
             opacity: 1,
-            animation: { preset: 'fade-in', duration: 500, delay: 0 },
+            animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false },
+            exitAnimation: null,
             content: { 
                 text: "Click to edit title",
                 fontFamily: 'Arial',
@@ -80,7 +81,8 @@ export const createErrorPresentation = (title: string, errorText: string): Prese
             type: 'text',
             x: 50, y: 150, width: 700, height: 100,
             rotation: 0, opacity: 1, flipX: false, flipY: false,
-            animation: { preset: 'fade-in', duration: 500, delay: 0 },
+            animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false },
+            exitAnimation: null,
             content: { 
                 text: title,
                 fontFamily: 'Arial', fontSize: 48, fontWeight: 'bold', fontStyle: 'normal',
@@ -93,7 +95,8 @@ export const createErrorPresentation = (title: string, errorText: string): Prese
             type: 'text',
             x: 50, y: 250, width: 700, height: 100,
             rotation: 0, opacity: 1, flipX: false, flipY: false,
-            animation: { preset: 'fade-in', duration: 500, delay: 0 },
+            animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false },
+            exitAnimation: null,
             content: { 
                 text: `Sorry, something went wrong:\n${errorText}\n\nPlease try again with a more specific prompt.`,
                 fontFamily: 'Arial', fontSize: 18, fontWeight: 'normal', fontStyle: 'normal',
@@ -145,6 +148,17 @@ export const startLiveSession = async (callbacks: LiveSessionCallbacks): Promise
     });
 };
 
+const animationSchema = {
+    type: Type.OBJECT,
+    properties: { 
+        preset: { type: Type.STRING, enum: ['none', 'fade-in', 'fly-in-up', 'fly-in-left', 'zoom-in', 'bounce-in', 'flip-3d', 'reveal-mask', 'parallax-drift-slow', 'parallax-drift-medium', 'parallax-drift-fast', 'fade-out', 'fly-out-down', 'fly-out-right', 'zoom-out'] },
+        trigger: { type: Type.STRING, enum: ['on-load', 'on-click'] },
+        duration: { type: Type.NUMBER },
+        delay: { type: Type.NUMBER },
+        loop: { type: Type.BOOLEAN },
+    }
+};
+
 const presentationSchema = {
     type: Type.OBJECT,
     properties: {
@@ -179,14 +193,8 @@ const presentationSchema = {
                                 flipX: { type: Type.BOOLEAN },
                                 flipY: { type: Type.BOOLEAN },
                                 opacity: { type: Type.NUMBER },
-                                animation: {
-                                    type: Type.OBJECT,
-                                    properties: { 
-                                        preset: { type: Type.STRING, enum: ['none', 'fade-in', 'fly-in-up', 'fly-in-left', 'zoom-in', 'bounce-in', 'flip-3d', 'reveal-mask'] },
-                                        duration: { type: Type.NUMBER },
-                                        delay: { type: Type.NUMBER },
-                                    }
-                                },
+                                animation: animationSchema,
+                                exitAnimation: animationSchema,
                                 content: {
                                     type: Type.OBJECT,
                                     properties: {
@@ -262,12 +270,14 @@ export const editPresentation = async (prompt: string, currentPresentation: Pres
 - "delete slide 3": Remove the slide at the specified index from the 'slides' array.
 - "change the background of the current slide to blue": Modify the 'background' property of the specified slide.
 - "flip the selected image vertically": Set the 'flipY' property of the object to true.
-- "make the title bounce in": Set the 'animation' property of the title object to '{ "preset": "bounce-in", "duration": 1000, "delay": 0 }'.
-- "make the image do a 3d flip": Set the animation preset to 'flip-3d'.
+- "make the title bounce in": Set the 'animation' property of the title object to '{ "preset": "bounce-in", "trigger": "on-load", "duration": 1000, "delay": 0, "loop": false }'.
+- "make the image fade out on click": Set the 'exitAnimation' property of the image to '{ "preset": "fade-out", "trigger": "on-click", "duration": 500, "delay": 0, "loop": false }'.
+- "make the star spin continuously": Find an object that looks like a star and set its animation to loop. e.g. '{ "preset": "spin", "trigger": "on-load", "duration": 2000, "delay": 0, "loop": true }'.
 - "use a cube transition for this slide": Set the current slide's 'transition' preset to 'cube-rotate' and suggest a longer duration like 1000ms.
 - "make the slide transition faster": Decrease the 'duration' of the current slide's 'transition' property.
+- "add a parallax effect": Apply different parallax-drift presets to objects to create a sense of depth, e.g., 'parallax-drift-slow' for backgrounds and 'parallax-drift-fast' for foreground text.
 
-Always preserve existing IDs for objects and slides unless creating a new one. Ensure the output is a single, valid JSON object.`;
+Always preserve existing IDs for objects and slides unless creating a new one. Ensure the output is a single, valid JSON object. For exit animations, if one does not exist, you can add one. If the user asks to remove an animation, set the animation or exitAnimation property to null.`;
 
     const fullPrompt = `Current Presentation State:
 \`\`\`json

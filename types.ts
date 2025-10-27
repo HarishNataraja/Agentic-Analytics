@@ -79,17 +79,19 @@ export interface User {
   name?: string;
 }
 
-// Fix: To resolve declaration conflicts, the window property is defined inline and a type alias is exported.
+// Fix: Resolve declaration conflict by defining a global AIStudio interface
+// and using it for window.aistudio. This aligns this declaration with
+// other potential declarations. Also, add webkitAudioContext for browser compatibility.
 declare global {
+    interface AIStudio {
+        hasSelectedApiKey: () => Promise<boolean>;
+        openSelectKey: () => Promise<void>;
+    }
     interface Window {
-        aistudio: {
-            hasSelectedApiKey: () => Promise<boolean>;
-            openSelectKey: () => Promise<void>;
-        };
+        aistudio: AIStudio;
+        webkitAudioContext: typeof AudioContext;
     }
 }
-
-export type AIStudio = Window['aistudio'];
 
 
 export interface DashboardItem {
@@ -101,13 +103,16 @@ export interface DashboardItem {
 
 export type SlideObjectType = 'text' | 'chart' | 'shape' | 'image' | 'icon' | 'video';
 
-export type ObjectAnimationPreset = 'none' | 'fade-in' | 'fly-in-up' | 'fly-in-left' | 'zoom-in' | 'bounce-in' | 'flip-3d' | 'reveal-mask';
+export type ObjectAnimationPreset = 'none' | 'fade-in' | 'fly-in-up' | 'fly-in-left' | 'zoom-in' | 'bounce-in' | 'flip-3d' | 'reveal-mask' | 'parallax-drift-slow' | 'parallax-drift-medium' | 'parallax-drift-fast' | 'fade-out' | 'fly-out-down' | 'fly-out-right' | 'zoom-out';
 export type SlideTransitionPreset = 'none' | 'fade' | 'slide-in-left' | 'slide-in-right' | 'cube-rotate' | 'card-flip';
+export type AnimationTrigger = 'on-load' | 'on-click';
 
 export interface ObjectAnimation {
     preset: ObjectAnimationPreset;
+    trigger: AnimationTrigger;
     duration: number; // in ms
     delay: number; // in ms
+    loop: boolean;
 }
 
 export interface SlideTransition {
@@ -217,6 +222,7 @@ export interface SlideObject {
   shadow?: Shadow;
   locked?: boolean;
   animation: ObjectAnimation;
+  exitAnimation: ObjectAnimation | null;
   content: TextContent | ChartData | ShapeContent | ImageContent | IconContent | VideoContent;
 }
 

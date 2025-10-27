@@ -189,7 +189,9 @@ const App: React.FC = () => {
                         flipX: false,
                         flipY: false,
                         opacity: 1,
-                        animation: { preset: 'fade-in', duration: 500, delay: 0 }, content: imageContent
+                        animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false }, 
+                        exitAnimation: null,
+                        content: imageContent
                     };
                     const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: [...s.objects, newImageObject] } : s);
                     handleSetPresentation({ ...presentation, slides: newSlides });
@@ -208,7 +210,9 @@ const App: React.FC = () => {
                         flipX: false,
                         flipY: false,
                         opacity: 1,
-                        animation: { preset: 'fade-in', duration: 500, delay: 0 }, content: videoContent
+                        animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false }, 
+                        exitAnimation: null,
+                        content: videoContent
                     };
                     const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: [...s.objects, newVideoObject] } : s);
                     handleSetPresentation({ ...presentation, slides: newSlides });
@@ -380,8 +384,115 @@ ${contextForPrompt}
     }
   };
 
-  const startVoice = useCallback(async () => { /* ... */ }, [isVoiceRecording]);
-  const stopVoice = useCallback(() => { /* ... */ }, [isVoiceRecording]);
+  const startVoice = useCallback(async () => {
+    if (isVoiceRecording) return;
+    try {
+        setIsVoiceRecording(true);
+        setMessages(prev => [...prev, {id: 'voice-start', sender: 'bot', text: 'Voice conversation started. Speak now...'}]);
+
+        inputAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        outputAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        nextAudioStartTimeRef.current = 0;
+        audioSourcesRef.current.clear();
+        currentTranscriptionRef.current = { input: '', output: '' };
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStreamRef.current = stream;
+
+        const sessionPromise = geminiService.startLiveSession({
+            onmessage: async (message: LiveServerMessage) => {
+                const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+                if (base64Audio && outputAudioContextRef.current) {
+                    nextAudioStartTimeRef.current = Math.max(nextAudioStartTimeRef.current, outputAudioContextRef.current.currentTime);
+                    const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContextRef.current, 24000, 1);
+                    const source = outputAudioContextRef.current.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(outputAudioContextRef.current.destination);
+                    source.addEventListener('ended', () => audioSourcesRef.current.delete(source));
+                    source.start(nextAudioStartTimeRef.current);
+                    nextAudioStartTimeRef.current += audioBuffer.duration;
+                    audioSourcesRef.current.add(source);
+                }
+
+                if (message.serverContent?.inputTranscription) {
+                    currentTranscriptionRef.current.input += message.serverContent.inputTranscription.text;
+                }
+                if (message.serverContent?.outputTranscription) {
+                    currentTranscriptionRef.current.output += message.serverContent.outputTranscription.text;
+                }
+                if (message.serverContent?.turnComplete) {
+                    const fullInput = currentTranscriptionRef.current.input.trim();
+                    const fullOutput = currentTranscriptionRef.current.output.trim();
+                    if (fullInput) setMessages(prev => [...prev, { id: `transcript-in-${Date.now()}`, sender: 'user', text: fullInput }]);
+                    if (fullOutput) setMessages(prev => [...prev, { id: `transcript-out-${Date.now()}`, sender: 'bot', text: fullOutput }]);
+                    currentTranscriptionRef.current = { input: '', output: '' };
+                }
+
+                if (message.serverContent?.interrupted) {
+                    for (const source of audioSourcesRef.current.values()) {
+                        source.stop();
+                        audioSourcesRef.current.delete(source);
+                    }
+                    nextAudioStartTimeRef.current = 0;
+                }
+            },
+            onerror: (e) => {
+                console.error("Live session error:", e);
+                setMessages(prev => [...prev, { id: 'voice-error', sender: 'bot', text: `Voice error: ${e.type}` }]);
+                stopVoice();
+            },
+            onclose: () => {
+                console.log("Live session closed.");
+            }
+        });
+        
+        liveSessionRef.current = await sessionPromise;
+
+        const source = inputAudioContextRef.current.createMediaStreamSource(stream);
+        const scriptProcessor = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
+        scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+            const pcmBlob = createPcmBlob(inputData);
+            // Fix: Use session promise to send data to avoid race conditions and stale refs, per guidelines.
+            sessionPromise.then(session => {
+              session.sendRealtimeInput({ media: pcmBlob });
+            });
+        };
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(inputAudioContextRef.current.destination);
+        scriptProcessorRef.current = scriptProcessor;
+
+    } catch (error) {
+        console.error("Failed to start voice conversation:", error);
+        setMessages(prev => [...prev, { id: 'voice-setup-error', sender: 'bot', text: `Could not start voice: ${error instanceof Error ? error.message : 'Unknown error'}` }]);
+        setIsVoiceRecording(false);
+    }
+  }, [isVoiceRecording]);
+
+  const stopVoice = useCallback(() => {
+    if (!isVoiceRecording) return;
+    
+    liveSessionRef.current?.close();
+    liveSessionRef.current = null;
+
+    audioStreamRef.current?.getTracks().forEach(track => track.stop());
+    audioStreamRef.current = null;
+
+    scriptProcessorRef.current?.disconnect();
+    scriptProcessorRef.current = null;
+
+    inputAudioContextRef.current?.close();
+    outputAudioContextRef.current?.close();
+
+    for (const source of audioSourcesRef.current.values()) {
+        source.stop();
+    }
+    audioSourcesRef.current.clear();
+    
+    setIsVoiceRecording(false);
+    setMessages(prev => [...prev, {id: 'voice-end', sender: 'bot', text: 'Voice conversation ended.'}]);
+
+  }, [isVoiceRecording]);
 
   useEffect(() => {
       return () => {

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useCallback } from 'react';
-import { Presentation, Slide, SlideObject, DashboardItem, ChartData, TextContent, ImageContent, SlideTransition, ObjectAnimation, ShapeContent, ShapeType, AspectRatio, VideoContent, Shadow, Gradient, ImageFilters, ObjectAnimationPreset, SlideTransitionPreset } from '../../types';
+import { Presentation, Slide, SlideObject, DashboardItem, ChartData, TextContent, ImageContent, SlideTransition, ObjectAnimation, ShapeContent, ShapeType, AspectRatio, VideoContent, Shadow, Gradient, ImageFilters, ObjectAnimationPreset, SlideTransitionPreset, AnimationTrigger } from '../../types';
 import { AddSlideIcon, AddTextIcon, AddChartIcon, AddImageIcon, TrashIcon, BringForwardIcon, SendBackwardIcon, BoldIcon, ItalicIcon, UnderlineIcon, AlignLeftIcon, AlignCenterIcon, AlignRightIcon, UndoIcon, RedoIcon, CopyIcon, PasteIcon, DuplicateIcon, PresentIcon, AlignObjectsLeftIcon, AlignObjectsCenterIcon, AlignObjectsRightIcon, AlignObjectsTopIcon, AlignObjectsMiddleIcon, AlignObjectsBottomIcon, ShapesIcon, VideoIcon, PlayIcon } from '../icons';
 import ChartRenderer from '../charts/ChartRenderer';
 import { shapeCategories, ShapeIcon, ShapeRenderer } from './shapes';
@@ -46,6 +46,7 @@ const PresentationEditor: React.FC<PresentationEditorProps> = ({
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [clipboard, setClipboard] = useState<SlideObject[] | null>(null);
   const [isShapesMenuOpen, setIsShapesMenuOpen] = useState(false);
+  const [activeAnimationTab, setActiveAnimationTab] = useState<'enter' | 'exit'>('enter');
 
   const interactionRef = useRef<{
     mode: InteractionMode;
@@ -118,7 +119,8 @@ const PresentationEditor: React.FC<PresentationEditorProps> = ({
         type: 'text',
         x: 100, y: 100, width: 300, height: 50,
         rotation: 0, opacity: 1, flipX: false, flipY: false,
-        animation: { preset: 'fade-in', duration: 500, delay: 0 },
+        animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false },
+        exitAnimation: null,
         content: {
             text: "New Text Box",
             fontFamily: 'Arial', fontSize: 24, fontWeight: 'normal', fontStyle: 'normal',
@@ -137,7 +139,8 @@ const PresentationEditor: React.FC<PresentationEditorProps> = ({
       type: 'shape',
       x: 100, y: 100, width: 100, height: 100, rotation: 0, opacity: 1,
       flipX: false, flipY: false,
-      animation: { preset: 'fade-in', duration: 500, delay: 0 },
+      animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false },
+      exitAnimation: null,
       content: { 
           shape,
           fillColor: '#cccccc',
@@ -157,7 +160,8 @@ const PresentationEditor: React.FC<PresentationEditorProps> = ({
       type: 'image',
       x: 50, y: 50, width: 400, height: 300, rotation: 0, opacity: 1,
       flipX: false, flipY: false,
-      animation: { preset: 'fade-in', duration: 500, delay: 0 },
+      animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false },
+      exitAnimation: null,
       content: { 
           src,
           altText: alt,
@@ -411,6 +415,67 @@ const PresentationEditor: React.FC<PresentationEditorProps> = ({
     </div>
   );
 
+  const renderAnimationProperties = (
+    animation: ObjectAnimation | null,
+    animationType: 'enter' | 'exit'
+  ) => {
+    const isEnter = animationType === 'enter';
+    const animationKey = isEnter ? 'animation' : 'exitAnimation';
+    const presets = OBJECT_ANIMATION_PRESETS.filter(p => 
+        isEnter ? !p.id.includes('out') : p.id.includes('out') || p.id === 'none' || p.id === 'fade-in' // fade-in can be fade-out
+    );
+
+    const handleAnimationChange = (props: Partial<ObjectAnimation>) => {
+        if (isEnter) {
+            updateSelectedObjects(obj => ({
+                animation: { ...obj.animation, ...props }
+            }), true);
+        } else {
+             updateSelectedObjects(obj => ({
+                exitAnimation: obj.exitAnimation ? { ...obj.exitAnimation, ...props } : {
+                    preset: 'fade-out', trigger: 'on-load', duration: 500, delay: 0, loop: false, ...props
+                }
+            }), true);
+        }
+    };
+    
+    if (!isEnter && !animation) {
+        return <button onClick={() => handleAnimationChange({ preset: 'fade-out' })} className="text-xs text-blue-500 hover:underline">Add Exit Animation</button>
+    }
+    if (!animation) return null;
+
+    return (
+        <div className="space-y-2">
+            <PropInput label="Preset">
+                <select value={animation.preset} onChange={e => handleAnimationChange({ preset: e.target.value as ObjectAnimationPreset })} className="w-full p-1 rounded bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-xs">
+                    {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+            </PropInput>
+            <PropInput label="Start">
+                 <select value={animation.trigger} onChange={e => handleAnimationChange({ trigger: e.target.value as AnimationTrigger })} className="w-full p-1 rounded bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-xs">
+                    <option value="on-load">On Load</option>
+                    <option value="on-click">On Click</option>
+                </select>
+            </PropInput>
+            <div className="grid grid-cols-2 gap-2">
+                <PropInput label="Duration">
+                    <input type="number" step="100" value={animation.duration} onChange={e => handleAnimationChange({ duration: parseInt(e.target.value) })} className="w-full p-1 rounded bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-xs" />
+                </PropInput>
+                <PropInput label="Delay">
+                    <input type="number" step="100" value={animation.delay} onChange={e => handleAnimationChange({ delay: parseInt(e.target.value) })} className="w-full p-1 rounded bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-xs" />
+                </PropInput>
+            </div>
+             <div className="flex items-center justify-between">
+                <label className="text-xs text-gray-600 dark:text-gray-400">Repeat</label>
+                <input type="checkbox" checked={animation.loop} onChange={e => handleAnimationChange({ loop: e.target.checked })} />
+            </div>
+             {!isEnter && (
+                 <button onClick={() => updateSelectedObjects({ exitAnimation: null }, true)} className="text-xs text-red-500 hover:underline mt-2">Remove Exit</button>
+             )}
+        </div>
+    )
+  }
+
   const renderPropertiesPanel = () => {
     if (selectedObjectIds.length === 0 && selectedSlide) {
         return (
@@ -520,19 +585,12 @@ const PresentationEditor: React.FC<PresentationEditorProps> = ({
             </PropSection>
 
             <PropSection title="Animation">
-                <PropInput label="Preset">
-                    <select value={obj.animation.preset} onChange={e => updateSelectedObjects({ animation: { ...obj.animation, preset: e.target.value as ObjectAnimationPreset } }, true)} className="w-full p-1 rounded bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-xs">
-                        {OBJECT_ANIMATION_PRESETS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                </PropInput>
-                <div className="grid grid-cols-2 gap-2">
-                    <PropInput label="Duration (ms)">
-                        <input type="number" step="100" value={obj.animation.duration} onChange={e => updateSelectedObjects({ animation: { ...obj.animation, duration: parseInt(e.target.value) } }, true)} className="w-20 p-1 rounded bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-xs" />
-                    </PropInput>
-                    <PropInput label="Delay (ms)">
-                        <input type="number" step="100" value={obj.animation.delay} onChange={e => updateSelectedObjects({ animation: { ...obj.animation, delay: parseInt(e.target.value) } }, true)} className="w-20 p-1 rounded bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-xs" />
-                    </PropInput>
+                <div className="flex border-b border-gray-200 dark:border-gray-700 mb-2">
+                    <button onClick={() => setActiveAnimationTab('enter')} className={`px-3 py-1 text-xs font-medium ${activeAnimationTab === 'enter' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}>Enter</button>
+                    <button onClick={() => setActiveAnimationTab('exit')} className={`px-3 py-1 text-xs font-medium ${activeAnimationTab === 'exit' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}>Exit</button>
                 </div>
+                {activeAnimationTab === 'enter' && renderAnimationProperties(obj.animation, 'enter')}
+                {activeAnimationTab === 'exit' && renderAnimationProperties(obj.exitAnimation, 'exit')}
             </PropSection>
         </div>
     );

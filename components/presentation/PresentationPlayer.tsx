@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Presentation, SlideObject, ChartData, TextContent, ImageContent, Slide, ShapeContent, VideoContent } from '../../types';
+import { Presentation, SlideObject, ChartData, TextContent, ImageContent, Slide, ShapeContent, VideoContent, ObjectAnimation } from '../../types';
 import ChartRenderer from '../charts/ChartRenderer';
 import { ShapeRenderer } from './shapes';
 import { OBJECT_ANIMATION_PRESETS } from './animationPresets';
@@ -20,8 +20,14 @@ const buildFilterString = (obj: SlideObject): string => {
     return filterString.trim();
 };
 
+interface RenderObjectProps {
+    obj: SlideObject;
+    isExiting: boolean;
+    onClickedObjectIds: Set<string>;
+    onObjectClick: (obj: SlideObject) => void;
+}
 
-const renderObject = (obj: SlideObject) => {
+const RenderedObject: React.FC<RenderObjectProps> = ({ obj, isExiting, onClickedObjectIds, onObjectClick }) => {
     let content;
     
     if (obj.type === 'text') {
@@ -63,15 +69,27 @@ const renderObject = (obj: SlideObject) => {
         content = <video src={videoContent.src} className="w-full h-full object-cover" controls autoPlay loop muted />;
     }
 
-    const animation = obj.animation;
+    const animation = isExiting ? obj.exitAnimation : obj.animation;
+    
+    const shouldPlayAnimation = 
+        animation &&
+        animation.preset !== 'none' &&
+        (isExiting || 
+         (animation.trigger === 'on-load') || 
+         (animation.trigger === 'on-click' && onClickedObjectIds.has(obj.id))
+        );
+
     const animationStyle: React.CSSProperties = {};
-    if (animation && animation.preset !== 'none') {
+    if (shouldPlayAnimation) {
         const presetName = animation.preset.replace(/-(\w)/g, (_, p1) => p1.toUpperCase());
         animationStyle.animationName = presetName;
         animationStyle.animationDuration = `${animation.duration}ms`;
         animationStyle.animationDelay = `${animation.delay}ms`;
         animationStyle.animationFillMode = 'both';
         animationStyle.animationTimingFunction = 'ease-out';
+        if (animation.loop) {
+            animationStyle.animationIterationCount = 'infinite';
+        }
         if (animation.preset === 'flip-3d') {
             animationStyle.backfaceVisibility = 'hidden';
         }
@@ -93,13 +111,16 @@ const renderObject = (obj: SlideObject) => {
     };
 
     return (
-        <div key={obj.id} style={wrapperStyle}>
+        <div 
+          key={obj.id} 
+          style={wrapperStyle}
+          onClick={() => onObjectClick(obj)}
+        >
             {content}
         </div>
     );
 };
 
-// Fix: Added missing PresentationPlayerProps interface definition.
 interface PresentationPlayerProps {
     presentation: Presentation;
     onExit: () => void;
@@ -109,22 +130,53 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [previousSlideIndex, setPreviousSlideIndex] = useState(-1);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [onClickedObjectIds, setOnClickedObjectIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setOnClickedObjectIds(new Set()); // Reset on-click animations when slide changes
+  }, [currentSlideIndex]);
+  
+  const handleObjectClick = (obj: SlideObject) => {
+      if(obj.animation.trigger === 'on-click') {
+          setOnClickedObjectIds(prev => new Set(prev).add(obj.id));
+      }
+  };
+
+  const getTransitionDuration = (slideIndex: number): number => {
+    const slide = presentation.slides[slideIndex];
+    if (!slide) return 500;
+
+    const exitAnimations = slide.objects.map(o => o.exitAnimation).filter(Boolean) as ObjectAnimation[];
+    const maxExitDuration = exitAnimations.length > 0 
+        ? Math.max(...exitAnimations.map(a => a.delay + a.duration)) 
+        : 0;
+    
+    return Math.max(slide.transition.duration, maxExitDuration);
+  };
 
   const goToNextSlide = () => {
     if (currentSlideIndex < presentation.slides.length - 1 && !isAnimating) {
+      const transitionDuration = getTransitionDuration(currentSlideIndex);
       setPreviousSlideIndex(currentSlideIndex);
       setCurrentSlideIndex(currentSlideIndex + 1);
       setIsAnimating(true);
-      setTimeout(() => setIsAnimating(false), presentation.slides[currentSlideIndex].transition.duration + 50);
+      setTimeout(() => {
+        setPreviousSlideIndex(-1);
+        setIsAnimating(false);
+      }, transitionDuration + 50);
     }
   };
 
   const goToPrevSlide = () => {
     if (currentSlideIndex > 0 && !isAnimating) {
+      const transitionDuration = getTransitionDuration(currentSlideIndex -1);
       setPreviousSlideIndex(currentSlideIndex);
       setCurrentSlideIndex(currentSlideIndex - 1);
        setIsAnimating(true);
-       setTimeout(() => setIsAnimating(false), presentation.slides[currentSlideIndex].transition.duration + 50);
+       setTimeout(() => {
+           setPreviousSlideIndex(-1);
+           setIsAnimating(false);
+       }, transitionDuration + 50);
     }
   };
 
@@ -147,8 +199,10 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
   const getSlideStyle = (index: number, slide: Slide) => {
     const isCurrent = index === currentSlideIndex;
     const isPrevious = index === previousSlideIndex;
-    const transitionPreset = isCurrent ? presentation.slides[previousSlideIndex]?.transition.preset : slide.transition.preset;
-    const duration = isCurrent ? presentation.slides[previousSlideIndex]?.transition.duration : slide.transition.duration;
+    
+    // Determine which transition to use. If we are moving forward, the previous slide's transition matters for its exit.
+    const transitionSlide = isCurrent ? presentation.slides[previousSlideIndex] : slide;
+    const { preset: transitionPreset, duration } = transitionSlide?.transition || { preset: 'fade', duration: 500};
 
     const baseStyle: React.CSSProperties = {
         position: 'absolute',
@@ -158,13 +212,14 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
         transformStyle: 'preserve-3d',
         backfaceVisibility: 'hidden',
     };
+    
+    const direction = currentSlideIndex > previousSlideIndex ? 1 : -1;
 
     switch(transitionPreset) {
         case 'cube-rotate':
-            const angle = index > currentSlideIndex ? 90 : (index < currentSlideIndex ? -90 : 0);
             if (isCurrent) return { ...baseStyle, transform: 'rotateY(0deg) translateZ(640px)' };
-            if (isPrevious) return { ...baseStyle, transform: `rotateY(${currentSlideIndex > previousSlideIndex ? -90 : 90}deg) translateZ(640px)` };
-            return { ...baseStyle, transform: `rotateY(${angle}deg) translateZ(640px)` };
+            if (isPrevious) return { ...baseStyle, transform: `rotateY(${-90 * direction}deg) translateZ(640px)` };
+            return { ...baseStyle, transform: `rotateY(${90 * direction}deg) translateZ(640px)` };
 
         case 'card-flip':
             if (isCurrent) return { ...baseStyle, transform: 'rotateY(0deg)' };
@@ -173,13 +228,13 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
 
         case 'slide-in-left':
             if (isCurrent) return { ...baseStyle, transform: 'translateX(0%)' };
-            if (isPrevious) return { ...baseStyle, transform: 'translateX(-100%)' };
-            return { ...baseStyle, transform: 'translateX(100%)' };
+            if (isPrevious) return { ...baseStyle, transform: `translateX(${-100 * direction}%)` };
+            return { ...baseStyle, transform: `translateX(${100 * direction}%)` };
             
         case 'slide-in-right':
              if (isCurrent) return { ...baseStyle, transform: 'translateX(0%)' };
-            if (isPrevious) return { ...baseStyle, transform: 'translateX(100%)' };
-            return { ...baseStyle, transform: 'translateX(-100%)' };
+            if (isPrevious) return { ...baseStyle, transform: `translateX(${100 * direction}%)` };
+            return { ...baseStyle, transform: `translateX(${-100 * direction}%)` };
 
         case 'fade':
         default:
@@ -187,8 +242,8 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
     }
   };
 
-  const currentTransition = presentation.slides[currentSlideIndex]?.transition;
-  const use3dTransform = currentTransition?.preset === 'cube-rotate' || currentTransition?.preset === 'card-flip';
+  const currentSlide = presentation.slides[currentSlideIndex];
+  const use3dTransform = currentSlide?.transition.preset === 'cube-rotate' || currentSlide?.transition.preset === 'card-flip';
 
   const sceneStyle: React.CSSProperties = {
       perspective: use3dTransform ? '2000px' : undefined,
@@ -202,8 +257,8 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
       width: '100%',
       height: '100%',
       transformStyle: 'preserve-3d',
-      transition: `transform ${currentTransition?.duration}ms ease-in-out`,
-      transform: currentTransition?.preset === 'cube-rotate' ? `translateZ(-640px) rotateY(${currentSlideIndex * -90}deg)` : undefined,
+      transition: `transform ${currentSlide?.transition.duration}ms ease-in-out`,
+      transform: currentSlide?.transition.preset === 'cube-rotate' ? `translateZ(-640px) rotateY(${currentSlideIndex * -90}deg)` : undefined,
   }
 
   return (
@@ -212,7 +267,11 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
       <div className="flex-1 flex items-center justify-center p-8 overflow-hidden">
         <div style={sceneStyle}>
           <div style={stageStyle}>
-            {presentation.slides.map((slide, index) => (
+            {presentation.slides.map((slide, index) => {
+              const isVisible = index === currentSlideIndex || index === previousSlideIndex;
+              if(!isVisible) return null;
+              
+              return (
                 <div key={slide.id} style={getSlideStyle(index, slide)}>
                     <div 
                         className="w-full h-full shadow-lg relative" 
@@ -228,11 +287,18 @@ const PresentationPlayer: React.FC<PresentationPlayerProps> = ({ presentation, o
                             </div>
                         )}
                     {slide.objects.map((obj) => (
-                        renderObject(obj)
+                        <RenderedObject 
+                            key={obj.id}
+                            obj={obj}
+                            isExiting={index === previousSlideIndex}
+                            onClickedObjectIds={onClickedObjectIds}
+                            onObjectClick={handleObjectClick}
+                        />
                     ))}
                     </div>
                 </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
