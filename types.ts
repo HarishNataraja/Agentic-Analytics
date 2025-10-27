@@ -1,3 +1,4 @@
+
 export enum Agent {
   DATA_ANALYSIS = 'Data Analysis',
   DASHBOARD = 'Dashboard',
@@ -59,6 +60,7 @@ export interface Message {
   sender: 'user' | 'bot';
   text?: string;
   image?: string;
+  fileInfo?: { name: string };
   chart?: ChartData;
   isLoading?: boolean;
   isThinking?: boolean;
@@ -82,26 +84,52 @@ export interface DashboardItem {
   data: ChartData;
 }
 
-export type SlideObjectType = 'text' | 'chart' | 'shape' | 'image';
+export type SlideObjectType = 'text' | 'chart' | 'shape' | 'image' | 'icon';
 export type SlideTransitionType = 'none' | 'fade' | 'slide-in-left' | 'slide-in-right';
 export type ObjectAnimationType = 'none' | 'fade-in' | 'fly-in-up' | 'fly-in-left';
 
+export type ShapeType = 
+    // Basic Shapes
+    | 'rectangle' | 'ellipse' | 'triangle' | 'right-triangle' | 'diamond' | 'pentagon' | 'hexagon' 
+    | 'octagon' | 'cross' | 'ring' | 'plus' | 'minus' | 'equals' | 'not-equals' | 'multiply'
+    | 'divide'
+    // Block Arrows
+    | 'right-arrow' | 'left-arrow' | 'up-arrow' | 'down-arrow' | 'left-right-arrow' 
+    | 'up-down-arrow' | 'quad-arrow' | 'chevron' | 'pentagon-arrow'
+    // Flowchart
+    | 'flowchart-process' | 'flowchart-alternate-process' | 'flowchart-decision' 
+    | 'flowchart-data' | 'flowchart-predefined-process' | 'flowchart-internal-storage' 
+    | 'flowchart-document' | 'flowchart-multidocument' | 'flowchart-terminator' 
+    | 'flowchart-preparation' | 'flowchart-manual-input' | 'flowchart-manual-operation'
+    | 'flowchart-connector' | 'flowchart-off-page-connector' | 'flowchart-card' 
+    | 'flowchart-punched-tape' | 'flowchart-summing-junction' | 'flowchart-or'
+    | 'flowchart-collate' | 'flowchart-sort' | 'flowchart-extract' | 'flowchart-merge';
 
+// Fix: Add missing presentation-related types to resolve compilation errors.
 export interface TextContent {
   text: string;
+  fontSize: number;
   bold: boolean;
   italic: boolean;
   underline: boolean;
-  fontSize: number;
   textAlign: 'left' | 'center' | 'right';
 }
 
 export interface ImageContent {
-    src: string;
+  src: string; // base64 data URL
 }
 
 export interface ShapeContent {
-    shape: 'rectangle' | 'ellipse';
+  shape: ShapeType;
+  color: string;
+  borderColor: string;
+  borderWidth: number;
+  borderStyle: 'solid' | 'dashed' | 'dotted';
+  opacity: number;
+}
+
+export interface IconContent {
+    name: string;
     color: string;
 }
 
@@ -112,15 +140,19 @@ export interface SlideObject {
   y: number;
   width: number;
   height: number;
-  content: TextContent | ChartData | ShapeContent | ImageContent;
-  animation?: { type: ObjectAnimationType };
+  animation: {
+    type: ObjectAnimationType;
+  };
+  content: TextContent | ChartData | ShapeContent | ImageContent | IconContent;
 }
 
 export interface Slide {
   id: string;
-  objects: SlideObject[];
   background: string;
-  transition?: { type: SlideTransitionType };
+  transition: {
+    type: SlideTransitionType;
+  };
+  objects: SlideObject[];
 }
 
 export interface Presentation {

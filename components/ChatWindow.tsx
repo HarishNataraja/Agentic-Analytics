@@ -1,14 +1,16 @@
 import React, { useRef, useEffect } from 'react';
 import { ChartData, Message } from '../types';
 import ChartRenderer from './charts/ChartRenderer';
-import { GeneralChatIcon, SaveIcon, ThinkingIcon } from './icons';
+import { GeneralChatIcon, SaveIcon, ThinkingIcon, FileIcon } from './icons';
 
 interface ChatWindowProps {
   messages: Message[];
   onSaveToDashboard?: (chartData: ChartData, title: string) => void;
+  suggestions?: string[];
+  onSuggestionClick?: (suggestion: string) => void;
 }
 
-const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSaveToDashboard }) => {
+const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSaveToDashboard, suggestions, onSuggestionClick }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -16,6 +18,25 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSaveToDashboard }) 
   };
 
   useEffect(scrollToBottom, [messages]);
+
+  if (messages.length === 0) {
+    return (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <h1 className="text-2xl font-semibold text-gray-800 dark:text-white mb-2">Agentic Platform</h1>
+            <p className="text-gray-500 dark:text-gray-400 mb-8">Start by uploading data or asking a question.</p>
+            {suggestions && onSuggestionClick && (
+                <div className="grid grid-cols-2 gap-4 max-w-md">
+                    {suggestions.map((text, i) => (
+                        <button key={i} onClick={() => onSuggestionClick(text)} className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors text-left">
+                            <p className="font-semibold text-sm">{text.split('\n')[0]}</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{text.split('\n').slice(1).join('\n')}</p>
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -43,6 +64,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSaveToDashboard }) 
                 <span>Thinking...</span>
               </div>
             ) : null}
+
+            {msg.fileInfo && (
+              <div className="mb-2 p-2 bg-blue-400/80 rounded-lg flex items-center gap-2 border border-blue-300">
+                  <FileIcon className="w-5 h-5 flex-shrink-0" />
+                  <span className="text-sm font-medium truncate">{msg.fileInfo.name}</span>
+              </div>
+            )}
+            
             {msg.text && <p className="whitespace-pre-wrap">{msg.text}</p>}
             {msg.image && <img src={msg.image} alt="Generated content" className="mt-2 rounded-lg max-w-sm" />}
             {msg.video && <video src={msg.video} controls className="mt-2 rounded-lg max-w-sm" />}

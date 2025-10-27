@@ -23,6 +23,23 @@ export interface LiveSession {
     sendToolResponse: (response: any) => void;
 }
 
+export const createBlankPresentation = (): Presentation => ({
+    id: `pres-${Date.now()}`,
+    title: "Untitled Presentation",
+    slides: [{
+        id: `slide-${Date.now()}`,
+        background: '#FFFFFF',
+        transition: { type: 'fade' },
+        objects: [{
+            id: `obj-title-${Date.now()}`,
+            type: 'text',
+            x: 50, y: 150, width: 700, height: 100,
+            animation: { type: 'fade-in' },
+            content: { text: "Click to edit title", bold: true, italic: false, underline: false, fontSize: 48, textAlign: 'center' }
+        }]
+    }]
+});
+
 export const createErrorPresentation = (title: string, errorText: string): Presentation => ({
     id: `pres-error-${Date.now()}`,
     title,
@@ -50,8 +67,6 @@ export const generateText = async (prompt: string, isThinkingMode: boolean, syst
     if (!ai) throw new Error("GoogleGenAI not initialized");
     const model = isThinkingMode ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
     
-    // Fix: The `GenerationConfig` type from the SDK does not include the `systemInstruction` property.
-    // Extend the type to allow `systemInstruction` as per the API usage guidelines.
     const config: GenerationConfig & { systemInstruction?: string } = {};
     if (isThinkingMode) {
         config.thinkingConfig = { thinkingBudget: 32768 };
@@ -69,53 +84,6 @@ export const generateText = async (prompt: string, isThinkingMode: boolean, syst
     return { text: response.text, sources };
 };
 
-export const generateImage = async (prompt: string, aspectRatio: AspectRatio): Promise<string> => {
-    if (!ai) throw new Error("GoogleGenAI not initialized");
-    const response = await ai.models.generateImages({
-        model: 'imagen-4.0-generate-001',
-        prompt: prompt,
-        config: {
-            numberOfImages: 1,
-            outputMimeType: 'image/png',
-            aspectRatio: aspectRatio,
-        },
-    });
-
-    const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
-    return `data:image/png;base64,${base64ImageBytes}`;
-};
-
-export const editImage = async (prompt: string, base64ImageData: string, mimeType: string): Promise<string> => {
-    if (!ai) throw new Error("GoogleGenAI not initialized");
-    const response: GenerateContentResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-            parts: [
-                {
-                    inlineData: {
-                        data: base64ImageData,
-                        mimeType: mimeType,
-                    },
-                },
-                {
-                    text: prompt,
-                },
-            ],
-        },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
-
-    for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) {
-            const base64ImageBytes: string = part.inlineData.data;
-            return `data:image/png;base64,${base64ImageBytes}`;
-        }
-    }
-    throw new Error("No image found in response");
-};
-
 export const startLiveSession = async (callbacks: LiveSessionCallbacks): Promise<LiveSession> => {
     if (!ai) throw new Error("GoogleGenAI not initialized");
     return ai.live.connect({
@@ -128,32 +96,78 @@ export const startLiveSession = async (callbacks: LiveSessionCallbacks): Promise
             },
             outputAudioTranscription: {},
             inputAudioTranscription: {},
-            systemInstruction: "You are a voice assistant for the Agentic Analytics Platform. Be conversational and helpful. You can answer general questions, but your primary role is to assist users with understanding their data and presentations. You can't perform actions in the app directly, but you can provide guidance.",
+            systemInstruction: "You are a voice assistant for the Agentic Analytics Platform...",
         },
     });
 };
 
-export const generatePresentation = async (prompt: string): Promise<Presentation> => {
-    if (!ai) throw new Error("GoogleGenAI not initialized");
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        title: { type: Type.STRING },
-                        slides: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    title: { type: Type.STRING },
-                                    bulletPoints: { 
-                                        type: Type.ARRAY,
-                                        items: { type: Type.STRING }
+const presentationSchema = {
+    type: Type.OBJECT,
+    properties: {
+        title: { type: Type.STRING },
+        slides: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    id: { type: Type.STRING },
+                    background: { type: Type.STRING },
+                    transition: { 
+                        type: Type.OBJECT,
+                        properties: { type: { type: Type.STRING } }
+                    },
+                    objects: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                id: { type: Type.STRING },
+                                type: { type: Type.STRING },
+                                x: { type: Type.NUMBER },
+                                y: { type: Type.NUMBER },
+                                width: { type: Type.NUMBER },
+                                height: { type: Type.NUMBER },
+                                animation: {
+                                    type: Type.OBJECT,
+                                    properties: { type: { type: Type.STRING } }
+                                },
+                                content: {
+                                    type: Type.OBJECT,
+                                    properties: {
+                                        // Text
+                                        text: { type: Type.STRING },
+                                        bold: { type: Type.BOOLEAN },
+                                        italic: { type: Type.BOOLEAN },
+                                        underline: { type: Type.BOOLEAN },
+                                        fontSize: { type: Type.NUMBER },
+                                        textAlign: { type: Type.STRING },
+                                        
+                                        // Image
+                                        src: { type: Type.STRING },
+                
+                                        // Shape & Icon
+                                        shape: { type: Type.STRING },
+                                        color: { type: Type.STRING },
+                                        borderColor: { type: Type.STRING },
+                                        borderWidth: { type: Type.NUMBER },
+                                        borderStyle: { type: Type.STRING },
+                                        opacity: { type: Type.NUMBER },
+                                        name: { type: Type.STRING },
+                
+                                        // Chart (simplified)
+                                        type: { type: Type.STRING },
+                                        data: { 
+                                            type: Type.ARRAY, 
+                                            items: { 
+                                                type: Type.OBJECT, 
+                                                properties: {
+                                                    name: { type: Type.STRING },
+                                                    value: { type: Type.NUMBER },
+                                                }
+                                            } 
+                                        },
+                                        dataKey: { type: Type.STRING },
+                                        nameKey: { type: Type.STRING },
                                     }
                                 }
                             }
@@ -161,89 +175,52 @@ export const generatePresentation = async (prompt: string): Promise<Presentation
                     }
                 }
             }
-        });
-        const presentationJson = JSON.parse(response.text);
-
-        // Transform the AI response into our Presentation data structure
-        const newPresentation: Presentation = {
-            id: `pres-${Date.now()}`,
-            title: presentationJson.title || "Untitled Presentation",
-            slides: (presentationJson.slides || []).map((slideData: any, index: number) => {
-                // Alternate transitions for a more dynamic presentation
-                const transitionType: SlideTransitionType = index % 2 === 0 ? 'slide-in-right' : 'slide-in-left';
-                return {
-                    id: `slide-${index}-${Date.now()}`,
-                    background: '#FFFFFF',
-                    transition: { type: transitionType },
-                    objects: [
-                        // Add title object
-                        {
-                            id: `obj-title-${index}-${Date.now()}`,
-                            type: 'text',
-                            x: 50,
-                            y: 50,
-                            width: 700,
-                            height: 50,
-                            animation: { type: 'fade-in' },
-                            content: {
-                                text: slideData.title || `Slide ${index + 1}`,
-                                bold: true,
-                                italic: false,
-                                underline: false,
-                                fontSize: 32,
-                                textAlign: 'left'
-                            } as TextContent
-                        },
-                        // Add bullet points as a single text object
-                        ...(slideData.bulletPoints && slideData.bulletPoints.length > 0 ? [{
-                            id: `obj-body-${index}-${Date.now()}`,
-                            type: 'text',
-                            x: 50,
-                            y: 120,
-                            width: 700,
-                            height: 300,
-                            animation: { type: 'fly-in-up' },
-                            content: {
-                                text: slideData.bulletPoints.map((pt: string) => `- ${pt}`).join('\n'),
-                                bold: false,
-                                italic: false,
-                                underline: false,
-                                fontSize: 18,
-                                textAlign: 'left'
-                            } as TextContent
-                        }] : [])
-                    ]
-                }
-            })
-        };
-        
-        // Add a title slide
-        newPresentation.slides.unshift({
-            id: `slide-title-${Date.now()}`,
-            background: '#FFFFFF',
-            transition: { type: 'fade' }, // Use a fade transition for the title slide
-            objects: [{
-                id: `obj-maintitle-${Date.now()}`,
-                type: 'text',
-                x: 50,
-                y: 150,
-                width: 700,
-                height: 100,
-                animation: { type: 'fade-in' },
-                content: {
-                    text: newPresentation.title,
-                    bold: true,
-                    italic: false,
-                    underline: false,
-                    fontSize: 48,
-                    textAlign: 'center'
-                } as TextContent
-            }]
-        })
-
-        return newPresentation;
-    } catch (error) {
-        console.error("Failed to generate or parse presentation:", error);
-        throw new Error("The AI failed to generate a valid presentation structure from the provided topic. Please try again with a more specific prompt.");
+        }
     }
-}
+};
+
+export const editPresentation = async (prompt: string, currentPresentation: Presentation): Promise<Presentation> => {
+    if (!ai) throw new Error("GoogleGenAI not initialized");
+    const systemInstruction = `You are an AI assistant integrated into a presentation editor. Your task is to modify a presentation based on user commands. The user will provide the current presentation's state as a JSON object and a command in plain text. You must return the *entire*, updated presentation JSON object, conforming strictly to the provided schema. Do not add any conversational text or markdown. Just return the JSON.
+
+**Available actions based on commands:**
+- "add a new slide": Add a new slide to the 'slides' array. Give it a unique ID.
+- "change the title of slide 2": Find the slide with the matching index and modify its title object.
+- "add a text box with 'Hello'": Add a new text object to the current slide's 'objects' array.
+- "delete slide 3": Remove the slide at the specified index from the 'slides' array.
+- "change the background of the current slide to blue": Modify the 'background' property of the specified slide.
+
+Always preserve existing IDs for objects and slides unless creating a new one. Ensure the output is a single, valid JSON object.`;
+
+    const fullPrompt = `Current Presentation State:
+\`\`\`json
+${JSON.stringify(currentPresentation)}
+\`\`\`
+
+User Command: "${prompt}"
+
+Return the full, updated presentation JSON object now.`
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro', // Using pro for better structure adherence
+            contents: fullPrompt,
+            config: {
+                systemInstruction,
+                responseMimeType: "application/json",
+                responseSchema: presentationSchema,
+            }
+        });
+        const updatedPresentationJson = JSON.parse(response.text);
+        // Basic validation
+        if (updatedPresentationJson && Array.isArray(updatedPresentationJson.slides)) {
+            return updatedPresentationJson;
+        }
+        console.warn("AI returned a valid JSON but with a missing or invalid 'slides' array. Returning current state.");
+        return createErrorPresentation("AI Response Error", "The AI returned an invalid presentation structure. It might have misunderstood the request.");
+
+    } catch (error) {
+        console.error("Failed to generate or parse presentation edit:", error);
+        throw new Error(`The AI failed to process the edit command. ${error instanceof Error ? error.message : ''}`);
+    }
+};

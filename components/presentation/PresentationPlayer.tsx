@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Presentation, SlideObject, ChartData, TextContent, ImageContent, Slide } from '../../types';
+import { Presentation, SlideObject, ChartData, TextContent, ImageContent, Slide, ShapeContent } from '../../types';
 import ChartRenderer from '../charts/ChartRenderer';
 
 interface PresentationPlayerProps {
@@ -41,8 +41,11 @@ const renderObject = (obj: SlideObject) => {
     } else if (obj.type === 'chart') {
         content = <div className="w-full h-full bg-white"><ChartRenderer chartData={obj.content as ChartData}/></div>
     } else if (obj.type === 'shape') {
-        const shapeContent = obj.content as { shape: 'rectangle' | 'ellipse', color: string };
+        // FIX: Use ShapeContent type and render border and opacity properties.
+        const shapeContent = obj.content as ShapeContent;
         style.backgroundColor = shapeContent.color;
+        style.border = `${shapeContent.borderWidth}px ${shapeContent.borderStyle} ${shapeContent.borderColor}`;
+        style.opacity = shapeContent.opacity;
         if (shapeContent.shape === 'ellipse') style.borderRadius = '50%';
         content = <div className="w-full h-full" style={style}></div>
     } else if (obj.type === 'image') {
