@@ -1,4 +1,6 @@
 
+
+
 export enum Agent {
   DATA_ANALYSIS = 'Data Analysis',
   DASHBOARD = 'Dashboard',
@@ -77,6 +79,19 @@ export interface User {
   name?: string;
 }
 
+// Fix: To resolve declaration conflicts, the window property is defined inline and a type alias is exported.
+declare global {
+    interface Window {
+        aistudio: {
+            hasSelectedApiKey: () => Promise<boolean>;
+            openSelectKey: () => Promise<void>;
+        };
+    }
+}
+
+export type AIStudio = Window['aistudio'];
+
+
 export interface DashboardItem {
   id: string;
   type: 'chart';
@@ -84,48 +99,102 @@ export interface DashboardItem {
   data: ChartData;
 }
 
-export type SlideObjectType = 'text' | 'chart' | 'shape' | 'image' | 'icon';
-export type SlideTransitionType = 'none' | 'fade' | 'slide-in-left' | 'slide-in-right';
-export type ObjectAnimationType = 'none' | 'fade-in' | 'fly-in-up' | 'fly-in-left';
+export type SlideObjectType = 'text' | 'chart' | 'shape' | 'image' | 'icon' | 'video';
+
+export type ObjectAnimationPreset = 'none' | 'fade-in' | 'fly-in-up' | 'fly-in-left' | 'zoom-in' | 'bounce-in' | 'flip-3d' | 'reveal-mask';
+export type SlideTransitionPreset = 'none' | 'fade' | 'slide-in-left' | 'slide-in-right' | 'cube-rotate' | 'card-flip';
+
+export interface ObjectAnimation {
+    preset: ObjectAnimationPreset;
+    duration: number; // in ms
+    delay: number; // in ms
+}
+
+export interface SlideTransition {
+    preset: SlideTransitionPreset;
+    duration: number; // in ms
+}
+
 
 export type ShapeType = 
     // Basic Shapes
-    | 'rectangle' | 'ellipse' | 'triangle' | 'right-triangle' | 'diamond' | 'pentagon' | 'hexagon' 
-    | 'octagon' | 'cross' | 'ring' | 'plus' | 'minus' | 'equals' | 'not-equals' | 'multiply'
-    | 'divide'
+    | 'rectangle' | 'rectangle-rounded-corners' | 'ellipse' | 'triangle' | 'right-triangle' | 'diamond' 
+    | 'pentagon' | 'hexagon' | 'octagon' | 'cross' | 'ring' | 'heart' | 'smiley-face' | 'lightning-bolt'
     // Block Arrows
-    | 'right-arrow' | 'left-arrow' | 'up-arrow' | 'down-arrow' | 'left-right-arrow' 
-    | 'up-down-arrow' | 'quad-arrow' | 'chevron' | 'pentagon-arrow'
+    | 'right-arrow' | 'left-arrow' | 'up-arrow' | 'down-arrow' | 'left-right-arrow' | 'chevron'
     // Flowchart
-    | 'flowchart-process' | 'flowchart-alternate-process' | 'flowchart-decision' 
-    | 'flowchart-data' | 'flowchart-predefined-process' | 'flowchart-internal-storage' 
-    | 'flowchart-document' | 'flowchart-multidocument' | 'flowchart-terminator' 
-    | 'flowchart-preparation' | 'flowchart-manual-input' | 'flowchart-manual-operation'
-    | 'flowchart-connector' | 'flowchart-off-page-connector' | 'flowchart-card' 
-    | 'flowchart-punched-tape' | 'flowchart-summing-junction' | 'flowchart-or'
-    | 'flowchart-collate' | 'flowchart-sort' | 'flowchart-extract' | 'flowchart-merge';
+    | 'flowchart-process' | 'flowchart-decision' | 'flowchart-data' | 'flowchart-terminator' 
+    // Stars and Banners
+    | 'star-5-point' | 'star-8-point' | 'banner-up' | 'scroll-horizontal'
+    // Callouts
+    | 'callout-rectangle' | 'callout-cloud';
 
-// Fix: Add missing presentation-related types to resolve compilation errors.
+
+export interface Shadow {
+    color: string;
+    blur: number;
+    x: number;
+    y: number;
+}
+
+export interface Gradient {
+    type: 'linear' | 'radial';
+    startColor: string;
+    endColor: string;
+    angle: number; // Only for linear
+}
+
+export interface ImageFilters {
+    brightness: number; // 0-200, default 100
+    contrast: number;   // 0-200, default 100
+    saturate: number;   // 0-200, default 100
+    grayscale: number;  // 0-100, default 0
+    sepia: number;      // 0-100, default 0
+    blur: number;       // 0-20, default 0
+}
+
 export interface TextContent {
   text: string;
+  fontFamily: string;
   fontSize: number;
-  bold: boolean;
-  italic: boolean;
-  underline: boolean;
+  fontWeight: 'normal' | 'bold';
+  fontStyle: 'normal' | 'italic';
+  textDecoration: 'none' | 'underline';
   textAlign: 'left' | 'center' | 'right';
+  color: string;
+  backgroundColor: string; // Can be 'transparent'
+  letterSpacing: number; // in px
+  lineHeight: number; // multiplier, e.g., 1.5
+  paragraphSpacing: number; // in px, space after paragraph
+  textTransform: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+  overflow: 'visible' | 'hidden' | 'ellipsis';
+  textShadow?: Shadow;
+  strokeColor: string;
+  strokeWidth: number;
 }
 
 export interface ImageContent {
   src: string; // base64 data URL
+  altText: string;
+  borderRadius: number;
+  borderColor: string;
+  borderWidth: number;
+  objectFit: 'cover' | 'contain';
+  filters: ImageFilters;
+}
+
+export interface VideoContent {
+    src: string; // object URL for the video blob
+    thumbnail: string; // base64 data URL for the thumbnail
 }
 
 export interface ShapeContent {
   shape: ShapeType;
-  color: string;
+  fillColor: string;
+  gradient?: Gradient;
   borderColor: string;
   borderWidth: number;
   borderStyle: 'solid' | 'dashed' | 'dotted';
-  opacity: number;
 }
 
 export interface IconContent {
@@ -136,22 +205,31 @@ export interface IconContent {
 export interface SlideObject {
   id: string;
   type: SlideObjectType;
+  name?: string;
   x: number;
   y: number;
   width: number;
   height: number;
-  animation: {
-    type: ObjectAnimationType;
-  };
-  content: TextContent | ChartData | ShapeContent | ImageContent | IconContent;
+  rotation: number;
+  flipX: boolean;
+  flipY: boolean;
+  opacity: number;
+  shadow?: Shadow;
+  locked?: boolean;
+  animation: ObjectAnimation;
+  content: TextContent | ChartData | ShapeContent | ImageContent | IconContent | VideoContent;
 }
 
 export interface Slide {
   id: string;
   background: string;
-  transition: {
-    type: SlideTransitionType;
+  backgroundImage?: {
+      src: string;
+      fit: 'cover' | 'contain';
+      opacity: number;
   };
+  notes: string;
+  transition: SlideTransition;
   objects: SlideObject[];
 }
 

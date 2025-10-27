@@ -2,6 +2,7 @@
   "name": "Agentic Analytics & Presentation Platform",
   "description": "A SaaS platform that allows users to chat with their data, generate EDA insights & dashboards, and transform those dashboards into professional-level presentations with context, notes, and infographics.",
   "requestFramePermissions": [
-    "microphone"
+    "microphone",
+    "camera"
   ]
 }

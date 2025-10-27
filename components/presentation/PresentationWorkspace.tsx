@@ -16,6 +16,10 @@ interface PresentationWorkspaceProps {
   onPresent: () => void;
   messages: Message[];
   onSendMessage: (prompt: string) => void;
+  selectedSlideId: string | null;
+  onSelectSlide: (id: string) => void;
+  selectedObjectIds: string[];
+  onSelectObjects: (ids: string[]) => void;
 }
 
 const PresentationWorkspace: React.FC<PresentationWorkspaceProps> = (props) => {
@@ -31,6 +35,10 @@ const PresentationWorkspace: React.FC<PresentationWorkspaceProps> = (props) => {
           canUndo={props.canUndo}
           canRedo={props.canRedo}
           onPresent={props.onPresent}
+          selectedSlideId={props.selectedSlideId}
+          onSelectSlide={props.onSelectSlide}
+          selectedObjectIds={props.selectedObjectIds}
+          onSelectObjects={props.onSelectObjects}
         />
       </div>
       <aside className="w-80 border-l border-gray-200 dark:border-gray-700 flex flex-col bg-gray-50 dark:bg-gray-800/50">

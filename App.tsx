@@ -9,9 +9,9 @@ import MessageInput from './components/MessageInput';
 import DashboardView from './components/dashboard/DashboardView';
 import PresentationWorkspace from './components/presentation/PresentationWorkspace';
 import PresentationPlayer from './components/presentation/PresentationPlayer';
-import { Agent, Message, AspectRatio, ChartData, User, DashboardItem, Presentation, Slide, SlideObject } from './types';
+import { Agent, Message, AspectRatio, ChartData, User, DashboardItem, Presentation, Slide, SlideObject, ImageContent, VideoContent } from './types';
 import * as geminiService from './services/geminiService';
-import { readFileContent } from './utils/fileUtils';
+import { readFileContent, readFileAsDataURL } from './utils/fileUtils';
 import { createPcmBlob, decode, decodeAudioData } from './utils/audioUtils';
 // Fix: Remove `LiveSession` from imports as it's not exported from @google/genai.
 import { GoogleGenAI, LiveServerMessage } from '@google/genai';
@@ -29,6 +29,7 @@ const App: React.FC = () => {
   const [isThinkingMode, setIsThinkingMode] = useState(false);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // --- AUTHENTICATION DISABLED ---
   const [user, setUser] = useState<User | null>({ id: 'dev-user', email: 'developer@example.com' });
@@ -41,6 +42,12 @@ const App: React.FC = () => {
   const presentation = presentationHistory[historyIndex];
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < presentationHistory.length - 1;
+
+  // Editor state lifted up for context-aware assistant
+  const [selectedSlideId, setSelectedSlideId] = useState<string | null>(null);
+  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+
 
   const [isPresentationLoading, setIsPresentationLoading] = useState(false);
   const [isPresenting, setIsPresenting] = useState(false);
@@ -65,6 +72,12 @@ const App: React.FC = () => {
         setPresentationHistory(newHistory);
     }
   };
+
+  useEffect(() => {
+    if (presentation && !selectedSlideId) {
+        setSelectedSlideId(presentation.slides[0]?.id);
+    }
+  }, [presentation, selectedSlideId]);
   
   const handleUndo = () => {
       if(canUndo) {
@@ -94,9 +107,14 @@ const App: React.FC = () => {
         const blankPresentation = geminiService.createBlankPresentation();
         setPresentationHistory([blankPresentation]);
         setHistoryIndex(0);
+        setSelectedSlideId(blankPresentation.slides[0].id);
+        setSelectedObjectIds([]);
+
     } else if (agent !== Agent.PRESENTATION) {
         setPresentationHistory([]);
         setHistoryIndex(-1);
+        setSelectedSlideId(null);
+        setSelectedObjectIds([]);
     }
   };
   
@@ -134,6 +152,103 @@ const App: React.FC = () => {
       }
   }
 
+  const handlePresentationAi = async (prompt: string, userMessage: Message) => {
+    setPresentationMessages(prev => [...prev, userMessage]);
+    const botMessageId = (Date.now() + 1).toString();
+    const loadingMessage: Message = { id: botMessageId, sender: 'bot', isLoading: true };
+    setPresentationMessages(prev => [...prev, loadingMessage]);
+
+    try {
+        const selectedSlide = presentation.slides.find(s => s.id === selectedSlideId);
+        const selectedImage = selectedSlide?.objects.find(o => selectedObjectIds.length === 1 && o.id === selectedObjectIds[0] && o.type === 'image') as SlideObject | undefined;
+        const selectedImageDataUrl = (selectedImage?.content as ImageContent)?.src;
+
+        const result = await geminiService.understandPresentationPrompt(prompt, selectedImageDataUrl);
+        
+        switch (result.type) {
+            case 'generate_image':
+                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: "Generating image...", isLoading: false, isThinking: true } : m));
+                const newImageSrc = await geminiService.generateImage(result.prompt, result.aspectRatio);
+                const imageContent: ImageContent = {
+                    src: newImageSrc,
+                    altText: result.prompt,
+                    borderRadius: 0,
+                    borderColor: '#000000',
+                    borderWidth: 0,
+                    objectFit: 'cover',
+                    filters: { brightness: 100, contrast: 100, saturate: 100, grayscale: 0, sepia: 0, blur: 0 }
+                };
+
+                if (selectedImage) { // Replace existing image
+                    const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: s.objects.map(o => o.id === selectedImage.id ? { ...o, content: imageContent } : o) } : s);
+                    handleSetPresentation({ ...presentation, slides: newSlides });
+                } else { // Add new image
+                    const newImageObject: SlideObject = {
+                        id: `obj-img-${Date.now()}`, type: 'image', x: 100, y: 100, width: 600, height: 400,
+                        rotation: 0,
+                        flipX: false,
+                        flipY: false,
+                        opacity: 1,
+                        animation: { preset: 'fade-in', duration: 500, delay: 0 }, content: imageContent
+                    };
+                    const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: [...s.objects, newImageObject] } : s);
+                    handleSetPresentation({ ...presentation, slides: newSlides });
+                }
+                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: "Here is the generated image.", image: newImageSrc } : m));
+                break;
+            
+            case 'generate_video':
+                 setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: "Generating video... This can take a few minutes.", isLoading: false, isThinking: true } : m));
+                try {
+                    const { videoSrc, thumbnailSrc } = await geminiService.generateVideo(result.prompt, selectedImageDataUrl);
+                    const videoContent: VideoContent = { src: videoSrc, thumbnail: thumbnailSrc };
+                    const newVideoObject: SlideObject = {
+                        id: `obj-vid-${Date.now()}`, type: 'video', x: 100, y: 100, width: 640, height: 360,
+                        rotation: 0,
+                        flipX: false,
+                        flipY: false,
+                        opacity: 1,
+                        animation: { preset: 'fade-in', duration: 500, delay: 0 }, content: videoContent
+                    };
+                    const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: [...s.objects, newVideoObject] } : s);
+                    handleSetPresentation({ ...presentation, slides: newSlides });
+                    setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: "Here is the generated video.", video: videoSrc } : m));
+                } catch(e) {
+                    if (e instanceof Error && e.message.includes('API key')) {
+                        setIsApiKeyModalOpen(true);
+                         setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: e.message } : m));
+                    } else {
+                        throw e; // re-throw other errors
+                    }
+                }
+                break;
+
+            case 'edit_image':
+                if (!selectedImageDataUrl) {
+                    setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: "Please select an image first to edit it." } : m));
+                    return;
+                }
+                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: "Editing image...", isLoading: false, isThinking: true } : m));
+                const editedImageSrc = await geminiService.editImage(selectedImageDataUrl, result.prompt);
+                const editedImageContent: ImageContent = { ...(selectedImage!.content as ImageContent), src: editedImageSrc };
+                const newSlidesEdited = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: s.objects.map(o => o.id === selectedImage!.id ? { ...o, content: editedImageContent } : o) } : s);
+                handleSetPresentation({ ...presentation, slides: newSlidesEdited });
+                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: "Here is the edited image.", image: editedImageSrc } : m));
+                break;
+
+            case 'presentation_edit':
+                const updatedPresentation = await geminiService.editPresentation(prompt, presentation);
+                handleSetPresentation(updatedPresentation);
+                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: "Done! I've updated the presentation." } : m));
+                break;
+        }
+    } catch(error) {
+        console.error("Error with presentation AI:", error);
+        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+        setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: `Sorry, I couldn't do that: ${errorMessage}` } : m));
+    }
+  }
+
 
   const handleSendMessage = async (prompt: string, file?: File) => {
     const userMessage: Message = { 
@@ -143,23 +258,48 @@ const App: React.FC = () => {
         fileInfo: file ? { name: file.name } : undefined
     };
     
-    // Handle presentation agent separately
     if (activeAgent === Agent.PRESENTATION) {
-        setPresentationMessages(prev => [...prev, userMessage]);
-        const botMessageId = (Date.now() + 1).toString();
-        const loadingMessage: Message = { id: botMessageId, sender: 'bot', isLoading: true };
-        setPresentationMessages(prev => [...prev, loadingMessage]);
-
-        try {
-            const updatedPresentation = await geminiService.editPresentation(prompt, presentation);
-            handleSetPresentation(updatedPresentation);
-            setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: "Done! I've updated the presentation." } : m));
-        } catch(error) {
-            console.error("Error editing presentation:", error);
-            const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
-            setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: `Sorry, I couldn't make that change: ${errorMessage}` } : m));
-        }
+        await handlePresentationAi(prompt, userMessage);
         return;
+    }
+
+    // Image Analysis Logic for Data Analysis Agent
+    if (file && file.type.startsWith('image/')) {
+        try {
+            const imageDataUrl = await readFileAsDataURL(file);
+            const userImageMessage: Message = {
+                id: Date.now().toString(),
+                sender: 'user',
+                text: prompt,
+                image: imageDataUrl,
+                fileInfo: { name: file.name }
+            };
+            setMessages(prev => [...prev, userImageMessage]);
+
+            const botMessageId = (Date.now() + 1).toString();
+            const loadingMessage: Message = { id: botMessageId, sender: 'bot', isLoading: true };
+            setMessages(prev => [...prev, loadingMessage]);
+
+            const response = await geminiService.analyzeImage(imageDataUrl, prompt);
+            setMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: response.text, isLoading: false } : m));
+
+        } catch (error) {
+            console.error("Error analyzing image:", error);
+            const errorMessage: Message = {
+                id: (Date.now() + 1).toString(),
+                sender: 'bot',
+                text: `Sorry, I couldn't analyze the image. Error: ${error instanceof Error ? error.message : 'Unknown error'}`
+            };
+            // Add user message with image first, then error
+            const userImageMessage: Message = {
+                id: userMessage.id,
+                sender: 'user',
+                text: prompt,
+                fileInfo: { name: file.name }
+            };
+            setMessages(prev => [...prev, userImageMessage, errorMessage]);
+        }
+        return; // Exit after handling image
     }
 
 
@@ -276,6 +416,10 @@ ${contextForPrompt}
                             onPresent={() => setIsPresenting(true)}
                             messages={presentationMessages}
                             onSendMessage={handleSendMessage}
+                            selectedSlideId={selectedSlideId}
+                            onSelectSlide={setSelectedSlideId}
+                            selectedObjectIds={selectedObjectIds}
+                            onSelectObjects={setSelectedObjectIds}
                         />;
             }
             return null; // Should not happen with the new logic
@@ -305,12 +449,47 @@ ${contextForPrompt}
     }
   };
 
+  const handleSelectApiKey = async () => {
+    // @ts-ignore
+    await window.aistudio.openSelectKey();
+    setIsApiKeyModalOpen(false);
+  }
+
   return (
     <div className="flex h-screen font-sans text-gray-900 dark:text-gray-100">
-      <Sidebar activeAgent={activeAgent} onAgentChange={handleAgentChange} user={user} onLogout={handleLogout} />
+      <Sidebar
+        activeAgent={activeAgent}
+        onAgentChange={handleAgentChange}
+        user={user}
+        onLogout={handleLogout}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
+      />
       <main className="flex-1 flex flex-col bg-white dark:bg-gray-900/80">
         {renderMainContent()}
       </main>
+      {isApiKeyModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md">
+                <h2 className="text-xl font-bold mb-4">API Key Required for Video Generation</h2>
+                <p className="text-gray-600 dark:text-gray-300 mb-4">
+                    The VEO model for video generation requires you to select your own API key.
+                    Please select a key to proceed. For more information on billing, visit {' '}
+                     <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                        ai.google.dev/gemini-api/docs/billing
+                    </a>.
+                </p>
+                <div className="flex justify-end space-x-2">
+                    <button onClick={() => setIsApiKeyModalOpen(false)} className="px-4 py-2 rounded-md text-gray-700 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">
+                        Cancel
+                    </button>
+                    <button onClick={handleSelectApiKey} className="px-4 py-2 rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                        Select API Key
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };
