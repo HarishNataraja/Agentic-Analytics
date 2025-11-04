@@ -1,10 +1,10 @@
 
 
-
 export enum Agent {
   DATA_ANALYSIS = 'Data Analysis',
   DASHBOARD = 'Dashboard',
   PRESENTATION = 'Presentation',
+  DATA_CONNECTIONS = 'Data Connections',
 }
 
 interface BaseChartData {
@@ -15,18 +15,21 @@ export interface BarChartData extends BaseChartData {
   type: 'bar';
   dataKey: string;
   nameKey: string;
+  aggregation?: 'sum' | 'average' | 'count';
 }
 
 export interface LineChartData extends BaseChartData {
   type: 'line';
   dataKey: string;
   nameKey: string;
+  aggregation?: 'sum' | 'average' | 'count';
 }
 
 export interface PieChartData extends BaseChartData {
   type: 'pie';
   dataKey: string;
   nameKey: string;
+  aggregation?: 'sum' | 'average' | 'count';
 }
 
 export interface ScatterChartData extends BaseChartData {
@@ -69,6 +72,7 @@ export interface Message {
   sources?: { uri: string; title: string }[];
   transcript?: { type: 'input' | 'output'; text: string };
   video?: string;
+  suggestions?: string[];
 }
 
 export type AspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
@@ -87,19 +91,65 @@ declare global {
         hasSelectedApiKey: () => Promise<boolean>;
         openSelectKey: () => Promise<void>;
     }
+    // Fix: To resolve a declaration conflict, 'aistudio' is declared as a global variable
+    // instead of a property on the Window interface. This makes it available on `window`
+    // while avoiding modifier conflicts with other ambient declarations.
+    var aistudio: AIStudio;
     interface Window {
-        aistudio: AIStudio;
         webkitAudioContext: typeof AudioContext;
     }
 }
 
 
-export interface DashboardItem {
-  id: string;
-  type: 'chart';
-  title: string;
-  data: ChartData;
+export interface DashboardLayout {
+    x: number; // grid column start
+    y: number; // grid row start
+    w: number; // width in grid columns
+    h: number; // height in grid rows
 }
+
+interface BaseDashboardItem {
+    id: string;
+    title: string;
+    layout: DashboardLayout;
+}
+
+export interface ChartItem extends BaseDashboardItem {
+    type: 'chart';
+    data: ChartData;
+}
+
+export interface KPIItem extends BaseDashboardItem {
+    type: 'kpi';
+    value: string;
+    change?: string; // e.g., "+5.2%"
+    changeType?: 'positive' | 'negative';
+}
+
+export interface TableAggregation {
+    groupBy: string; // column to group by
+    metrics: { // columns to calculate
+        sourceColumn: string;
+        operation: 'sum' | 'average' | 'count';
+    }[];
+}
+
+export interface TableItem extends BaseDashboardItem {
+    type: 'table';
+    headers: string[];
+    rows: (string | number)[][];
+    aggregation?: TableAggregation;
+}
+
+export interface FilterItem extends BaseDashboardItem {
+    type: 'filter';
+    filterType: 'select' | 'date-range';
+    options?: string[]; // for select
+    column: string; // The data column this filter applies to
+}
+
+export type DashboardItem = ChartItem | KPIItem | TableItem | FilterItem;
+
 
 export type SlideObjectType = 'text' | 'chart' | 'shape' | 'image' | 'icon' | 'video';
 
@@ -243,4 +293,66 @@ export interface Presentation {
   id: string;
   title: string;
   slides: Slide[];
+}
+
+// Data Connections
+export type DataSourceType = 'POSTGRESQL' | 'MYSQL' | 'GOOGLE_SHEETS' | 'SALESFORCE' | 'CSV' | 'EXCEL';
+
+export interface DataConnection {
+    id: string;
+    name: string;
+    type: DataSourceType;
+    // In a real app, credentials would be handled securely and not stored in frontend state.
+    // For this demo, it's just for UI purposes.
+    credentials: { [key: string]: string };
+    status: 'connected' | 'disconnected' | 'connecting';
+    createdAt: string;
+    fileContent?: string;
+    transformations?: Transformation[];
+}
+
+// Data Transformations
+export enum TransformationType {
+    RENAME_COLUMN = 'RENAME_COLUMN',
+    CHANGE_TYPE = 'CHANGE_TYPE',
+    REMOVE_MISSING = 'REMOVE_MISSING',
+    FILL_MISSING = 'FILL_MISSING',
+    FILTER_ROWS = 'FILTER_ROWS',
+}
+
+export interface Transformation {
+    id: string;
+    type: TransformationType;
+    payload: any; // e.g., { column: 'oldName', newName: 'newName' }
+}
+
+export interface AITransformationSuggestion {
+    id: string;
+    title: string;
+    description: string;
+    transformation: Transformation;
+}
+
+// Project Structure
+export interface Project {
+  id: string;
+  name: string;
+  createdAt: string;
+  
+  // Agent-specific state
+  messages: Message[];
+  dataContext: string | null;
+
+  dashboardItems: DashboardItem[];
+  dashboardData: any[] | null;
+  activeFilters: { [column: string]: string };
+
+  presentation: Presentation | null;
+  presentationMessages: Message[];
+  presentationHistory: Presentation[];
+  presentationHistoryIndex: number;
+  selectedSlideId: string | null;
+  selectedObjectIds: string[];
+
+  dataConnections: DataConnection[];
 }

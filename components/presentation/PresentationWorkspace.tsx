@@ -8,7 +8,7 @@ import MessageInput from '../MessageInput';
 interface PresentationWorkspaceProps {
   presentation: Presentation;
   dashboardItems: DashboardItem[];
-  onPresentationChange: (presentation: Presentation) => void;
+  onPresentationChange: (presentation: Presentation, newHistoryEntry?: boolean) => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;

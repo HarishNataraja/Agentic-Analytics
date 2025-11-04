@@ -1,7 +1,9 @@
+
+
 // Fix: Import `LiveServerMessage` and `Blob` instead of `LiveSession` and `LiveSessionCallbacks`.
 import { GoogleGenAI, GenerateContentResponse, Modality, LiveServerMessage, Type, Blob, GenerationConfig, FunctionDeclaration, Image } from "@google/genai";
 // Fix: Import AIStudio from the central types file.
-import { AspectRatio, Presentation, SlideTransition, TextContent, ObjectAnimation } from "../types";
+import { AspectRatio, Presentation, SlideTransition, TextContent, ObjectAnimation, DashboardItem } from "../types";
 
 // This is a browser-only app, so we can't use process.env.
 // The user will be prompted to provide their key for video generation.
@@ -534,11 +536,14 @@ export const understandPresentationPrompt = async (prompt: string, selectedImage
         const fc = response.functionCalls[0];
         switch (fc.name) {
             case 'generate_image':
-                return { type: 'generate_image', prompt: fc.args.prompt, aspectRatio: fc.args.aspectRatio || '16:9' };
+// Fix: Add type assertions for function call arguments, which are typed as `unknown`.
+                return { type: 'generate_image', prompt: fc.args.prompt as string, aspectRatio: (fc.args.aspectRatio as AspectRatio) || '16:9' };
             case 'edit_image':
-                return { type: 'edit_image', prompt: fc.args.prompt };
+// Fix: Add type assertions for function call arguments, which are typed as `unknown`.
+                return { type: 'edit_image', prompt: fc.args.prompt as string };
             case 'generate_video':
-                return { type: 'generate_video', prompt: fc.args.prompt };
+// Fix: Add type assertions for function call arguments, which are typed as `unknown`.
+                return { type: 'generate_video', prompt: fc.args.prompt as string };
             default:
                  return { type: 'presentation_edit' };
         }

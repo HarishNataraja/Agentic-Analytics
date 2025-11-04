@@ -62,7 +62,7 @@ const PresentationEditor: React.FC<PresentationEditorProps> = ({
   const shapesButtonRef = useRef<HTMLDivElement>(null);
   
   const selectedSlide = presentation.slides.find(s => s.id === selectedSlideId);
-  const selectedObjects = selectedSlide?.objects.filter(o => selectedObjectIds.includes(o.id)) || [];
+  const selectedObjects = (selectedSlide?.objects || []).filter(o => selectedObjectIds.includes(o.id));
   
   useEffect(() => {
     if (presentation.slides.length > 0 && !presentation.slides.find(s => s.id === selectedSlideId)) {

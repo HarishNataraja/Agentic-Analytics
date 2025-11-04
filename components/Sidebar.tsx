@@ -1,6 +1,6 @@
 import React from 'react';
 import { Agent, User } from '../types';
-import { DataAnalysisIcon, PresentationIcon, UserIcon, LogoutIcon, DashboardIcon, ChevronLeftIcon, ChevronRightIcon } from './icons';
+import { DataAnalysisIcon, PresentationIcon, UserIcon, LogoutIcon, DashboardIcon, ChevronLeftIcon, ChevronRightIcon, DatabaseIcon } from './icons';
 
 interface SidebarProps {
   activeAgent: Agent;
@@ -9,15 +9,17 @@ interface SidebarProps {
   onLogout: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  isProjectView: boolean;
 }
 
 const agents = [
   { id: Agent.DATA_ANALYSIS, icon: DataAnalysisIcon, name: 'Data Analysis' },
   { id: Agent.DASHBOARD, icon: DashboardIcon, name: 'Dashboard' },
   { id: Agent.PRESENTATION, icon: PresentationIcon, name: 'Presentation' },
+  { id: Agent.DATA_CONNECTIONS, icon: DatabaseIcon, name: 'Data Connections' },
 ];
 
-const Sidebar: React.FC<SidebarProps> = ({ activeAgent, onAgentChange, user, onLogout, isCollapsed, onToggleCollapse }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeAgent, onAgentChange, user, onLogout, isCollapsed, onToggleCollapse, isProjectView }) => {
   return (
     <aside className={`relative bg-gray-50 dark:bg-gray-800/50 flex flex-col border-r border-gray-200 dark:border-gray-700 transition-all duration-300 ease-in-out ${isCollapsed ? 'w-20 items-center p-2' : 'w-64 p-4'}`}>
       
@@ -29,29 +31,36 @@ const Sidebar: React.FC<SidebarProps> = ({ activeAgent, onAgentChange, user, onL
         {isCollapsed ? <ChevronRightIcon className="w-4 h-4" /> : <ChevronLeftIcon className="w-4 h-4" />}
       </button>
 
-      <div className={`mb-8 ${isCollapsed ? 'h-7' : ''}`}>
-        {!isCollapsed && <h1 className="text-xl font-bold text-gray-800 dark:text-white">Agentic Platform</h1>}
+      <div className={`mb-8 ${isCollapsed ? 'h-7 flex items-center justify-center' : ''}`}>
+         <div className={`flex items-center gap-2 ${isCollapsed ? 'justify-center' : ''}`}>
+            <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-lg">A</div>
+            {!isCollapsed && <h1 className="text-xl font-bold text-gray-800 dark:text-white">Agentic</h1>}
+        </div>
       </div>
 
-      <nav className="flex flex-col space-y-2 w-full">
-        {agents.map(({ id, icon: Icon, name }) => (
-          <button
-            key={id}
-            title={isCollapsed ? name : undefined}
-            onClick={() => onAgentChange(id)}
-            className={`flex items-center space-x-3 rounded-lg text-left text-sm font-medium transition-colors ${isCollapsed ? 'p-3 justify-center' : 'p-2'} ${
-              activeAgent === id
-                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
-                : 'text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700'
-            }`}
-          >
-            <Icon className="w-5 h-5 flex-shrink-0" />
-            {!isCollapsed && <span>{name}</span>}
-          </button>
-        ))}
-      </nav>
+      {!isProjectView && (
+        <nav className="flex-1 flex flex-col space-y-2 w-full">
+          {agents.map(({ id, icon: Icon, name }) => (
+            <button
+              key={id}
+              title={isCollapsed ? name : undefined}
+              onClick={() => onAgentChange(id)}
+              className={`flex items-center space-x-3 rounded-lg text-left text-sm font-medium transition-colors ${isCollapsed ? 'p-3 justify-center' : 'p-2'} ${
+                activeAgent === id
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                  : 'text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Icon className="w-5 h-5 flex-shrink-0" />
+              {!isCollapsed && <span>{name}</span>}
+            </button>
+          ))}
+        </nav>
+      )}
+      
+      {isProjectView && <div className="flex-1"></div>}
 
-      <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700 w-full">
+      <div className="pt-4 border-t border-gray-200 dark:border-gray-700 w-full">
         {user && (
           <div title={isCollapsed ? user.email : undefined} className={`flex items-center space-x-2 mb-3 rounded-lg ${isCollapsed ? 'justify-center' : 'p-2 bg-gray-100 dark:bg-gray-700/50'}`}>
              <UserIcon className="w-8 h-8 p-1.5 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 flex-shrink-0"/>

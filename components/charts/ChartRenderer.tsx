@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, ScatterChart, Scatter, ZAxis, ComposedChart, ErrorBar, TooltipProps,
@@ -11,6 +12,24 @@ interface ChartRendererProps {
 }
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+
+const CustomTooltip = ({ active, payload, label }: TooltipProps<ValueType, NameType>) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white dark:bg-gray-800 p-3 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg text-sm">
+        <p className="font-bold text-gray-800 dark:text-gray-200 mb-2">{`${label}`}</p>
+        {payload.map((pld, index) => (
+          <p key={index} style={{ color: pld.color || pld.fill }} className="flex items-center">
+            <span className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: pld.color || pld.fill }}></span>
+            {`${pld.name}: ${pld.value?.toLocaleString()}`}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
 
 // Custom Tooltip for Heatmap
 // Fix: Correctly type custom tooltip props. The `TooltipProps` from recharts can be missing `payload` for custom content.
@@ -51,23 +70,29 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ chartData }) => {
       case 'bar':
         return (
           <BarChart data={chartData.data}>
-            <CartesianGrid strokeDasharray="3 3" />
+             <defs>
+              <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8}/>
+                <stop offset="95%" stopColor="#8884d8" stopOpacity={0.2}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.5} />
             <XAxis dataKey={chartData.nameKey} />
             <YAxis />
-            <Tooltip />
+            <Tooltip content={<CustomTooltip />} cursor={{fill: 'rgba(206, 206, 206, 0.2)'}}/>
             <Legend />
-            <Bar dataKey={chartData.dataKey} fill="#8884d8" />
+            <Bar dataKey={chartData.dataKey} fill="url(#barGradient)" />
           </BarChart>
         );
       case 'line':
         return (
           <LineChart data={chartData.data}>
-            <CartesianGrid strokeDasharray="3 3" />
+            <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.5}/>
             <XAxis dataKey={chartData.nameKey} />
             <YAxis />
-            <Tooltip />
+            <Tooltip content={<CustomTooltip />} cursor={{stroke: 'rgba(206, 206, 206, 0.4)', strokeWidth: 1}}/>
             <Legend />
-            <Line type="monotone" dataKey={chartData.dataKey} stroke="#82ca9d" />
+            <Line type="monotone" dataKey={chartData.dataKey} stroke="#82ca9d" activeDot={{ r: 8 }} />
           </LineChart>
         );
       case 'pie':
@@ -78,7 +103,7 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ chartData }) => {
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip />
+            <Tooltip content={<CustomTooltip />} />
             <Legend />
           </PieChart>
         );
@@ -161,11 +186,9 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ chartData }) => {
   };
 
   return (
-    <div className="w-full h-80 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md my-2">
-      <ResponsiveContainer>
-        {renderChart()}
-      </ResponsiveContainer>
-    </div>
+    <ResponsiveContainer width="100%" height="100%">
+      {renderChart()}
+    </ResponsiveContainer>
   );
 };
 

@@ -1,55 +1,45 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import MessageInput from './components/MessageInput';
-// --- AUTHENTICATION DISABLED ---
-// import LoginPage from './components/auth/LoginPage';
-// import SignupPage from './components/auth/SignupPage';
-// import * as authService from './services/authService';
-// --- END AUTHENTICATION DISABLED ---
 import DashboardView from './components/dashboard/DashboardView';
+import DataConnectionsView from './components/data_connections/DataConnectionsView';
 import PresentationWorkspace from './components/presentation/PresentationWorkspace';
 import PresentationPlayer from './components/presentation/PresentationPlayer';
-import { Agent, Message, AspectRatio, ChartData, User, DashboardItem, Presentation, Slide, SlideObject, ImageContent, VideoContent } from './types';
+import ProjectsView from './components/ProjectsView';
+import { Agent, Message, AspectRatio, ChartData, User, DashboardItem, Presentation, Slide, SlideObject, ImageContent, VideoContent, DataConnection, ChartItem, Project } from './types';
 import * as geminiService from './services/geminiService';
+import * as mcpService from './services/mcpService';
 import { readFileContent, readFileAsDataURL } from './utils/fileUtils';
 import { createPcmBlob, decode, decodeAudioData } from './utils/audioUtils';
-// Fix: Remove `LiveSession` from imports as it's not exported from @google/genai.
-import { GoogleGenAI, LiveServerMessage } from '@google/genai';
-// Fix: Import 'ChatWindow' to resolve 'Cannot find name 'ChatWindow''.
+import { LiveServerMessage } from '@google/genai';
 import ChatWindow from './components/ChatWindow';
+import { ThinkingIcon, ChevronLeftIcon } from './components/icons';
+import { parseCsv, toCsv } from './utils/dataUtils';
+// Fix: Import `Layout` type from `react-grid-layout` to correctly type layout handlers.
+import { type Layout } from 'react-grid-layout';
 
-const MAX_DATA_CONTEXT_LENGTH = 500000; // 500k chars is a safe limit for the API context window
+const MAX_DATA_CONTEXT_LENGTH = 500000;
 
 const App: React.FC = () => {
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+        const saved = localStorage.getItem('agentic_projects');
+        return saved ? JSON.parse(saved) : [];
+    } catch {
+        return [];
+    }
+  });
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  
   const [activeAgent, setActiveAgent] = useState<Agent>(Agent.DATA_ANALYSIS);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [presentationMessages, setPresentationMessages] = useState<Message[]>([]);
-
-  const [dataContext, setDataContext] = useState<string | null>(null);
   const [isThinkingMode, setIsThinkingMode] = useState(false);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-
-  // --- AUTHENTICATION DISABLED ---
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [user, setUser] = useState<User | null>({ id: 'dev-user', email: 'developer@example.com' });
-  // --- END AUTHENTICATION DISABLED ---
-
-  const [dashboardItems, setDashboardItems] = useState<DashboardItem[]>([]);
   
-  const [presentationHistory, setPresentationHistory] = useState<Presentation[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const presentation = presentationHistory[historyIndex];
-  const canUndo = historyIndex > 0;
-  const canRedo = historyIndex < presentationHistory.length - 1;
-
-  // Editor state lifted up for context-aware assistant
-  const [selectedSlideId, setSelectedSlideId] = useState<string | null>(null);
-  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
-
-
-  const [isPresentationLoading, setIsPresentationLoading] = useState(false);
+  const [isDashboardGenerating, setIsDashboardGenerating] = useState(false);
   const [isPresenting, setIsPresenting] = useState(false);
 
   const liveSessionRef = useRef<geminiService.LiveSession | null>(null);
@@ -60,360 +50,438 @@ const App: React.FC = () => {
   const audioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const nextAudioStartTimeRef = useRef<number>(0);
   const currentTranscriptionRef = useRef({ input: '', output: '' });
-  
-  const handleSetPresentation = (newPresentation: Presentation, newHistoryEntry = true) => {
-    if (newHistoryEntry) {
-        const newHistory = presentationHistory.slice(0, historyIndex + 1);
-        setPresentationHistory([...newHistory, newPresentation]);
-        setHistoryIndex(newHistory.length);
-    } else {
-        const newHistory = [...presentationHistory];
-        newHistory[historyIndex] = newPresentation;
-        setPresentationHistory(newHistory);
-    }
-  };
+
+  const currentProject = projects.find(p => p.id === currentProjectId);
 
   useEffect(() => {
-    if (presentation && !selectedSlideId) {
-        setSelectedSlideId(presentation.slides[0]?.id);
-    }
-  }, [presentation, selectedSlideId]);
+    localStorage.setItem('agentic_projects', JSON.stringify(projects));
+  }, [projects]);
   
-  const handleUndo = () => {
-      if(canUndo) {
-          setHistoryIndex(historyIndex - 1);
-      }
+  const updateCurrentProject = (updateFn: (project: Project) => Project) => {
+      setProjects(prev => prev.map(p => p.id === currentProjectId ? updateFn(p) : p));
   };
   
-  const handleRedo = () => {
-      if(canRedo) {
-          setHistoryIndex(historyIndex + 1);
-      }
+  const handleSelectProject = (projectId: string) => {
+      setCurrentProjectId(projectId);
+      setActiveAgent(Agent.DATA_ANALYSIS); // Reset to default agent on project switch
+  };
+
+  const handleCreateProject = (name: string) => {
+      const newProject: Project = {
+          id: `proj-${Date.now()}`,
+          name,
+          createdAt: new Date().toISOString(),
+          messages: [],
+          dataContext: null,
+          dashboardItems: [],
+          dashboardData: null,
+          activeFilters: {},
+          presentation: null,
+          presentationMessages: [],
+          presentationHistory: [],
+          presentationHistoryIndex: -1,
+          selectedSlideId: null,
+          selectedObjectIds: [],
+          dataConnections: [],
+      };
+      setProjects(prev => [...prev, newProject]);
+      setCurrentProjectId(newProject.id);
+  };
+  
+  const handleGoToProjects = () => {
+      setCurrentProjectId(null);
   };
 
   const handleLogout = () => {
-    console.log("Logout is temporarily disabled. Reloading page.");
     window.location.reload();
   };
 
   const handleAgentChange = (agent: Agent) => {
     setActiveAgent(agent);
-    setMessages([]);
-    setPresentationMessages([]);
-    setDataContext(null);
     setIsPresenting(false); 
     
-    if(agent === Agent.PRESENTATION && !presentation) {
+    if(agent === Agent.PRESENTATION && currentProject && !currentProject.presentation) {
         const blankPresentation = geminiService.createBlankPresentation();
-        setPresentationHistory([blankPresentation]);
-        setHistoryIndex(0);
-        setSelectedSlideId(blankPresentation.slides[0].id);
-        setSelectedObjectIds([]);
-
-    } else if (agent !== Agent.PRESENTATION) {
-        setPresentationHistory([]);
-        setHistoryIndex(-1);
-        setSelectedSlideId(null);
-        setSelectedObjectIds([]);
+        updateCurrentProject(p => ({
+            ...p,
+            presentation: blankPresentation,
+            presentationHistory: [blankPresentation],
+            presentationHistoryIndex: 0,
+            selectedSlideId: blankPresentation.slides[0].id
+        }));
     }
   };
   
   const handleSaveToDashboard = (chartData: ChartData, title: string) => {
-    const newItem: DashboardItem = {
+    if (!currentProject) return;
+
+    const layouts = currentProject.dashboardItems.map(item => item.layout);
+    const newY = layouts.length > 0 ? Math.max(0, ...layouts.map(l => l.y + l.h)) : 0;
+
+    const newItem: ChartItem = {
       id: `dash-${Date.now()}`,
       type: 'chart',
       title: title.split('\n')[0], 
-      data: chartData
+      data: chartData,
+      layout: { x: 0, y: newY, w: 6, h: 4 }
     };
-    setDashboardItems(prev => [...prev, newItem]);
-    const confirmationMsg: Message = {
-      id: Date.now().toString(),
-      sender: 'bot',
-      text: `Chart "${newItem.title}" saved to dashboard.`
-    };
-    setMessages(prev => [...prev, confirmationMsg]);
+    updateCurrentProject(p => ({
+        ...p,
+        dashboardItems: [...p.dashboardItems, newItem],
+        messages: [...p.messages, {
+            id: Date.now().toString(),
+            sender: 'bot',
+            text: `Chart "${newItem.title}" saved to dashboard.`
+        }]
+    }));
+    setActiveAgent(Agent.DASHBOARD);
+  };
+
+  const parseResponse = (responseText: string) => {
+      const jsonRegex = /```json\n([\s\S]*?)\n```/;
+      const suggestionRegex = /^\d+\.\s*(.+)$/gm;
+      let chartData: ChartData | undefined;
+      let textPart = responseText;
+      let suggestions: string[] = [];
+      const chartMatch = responseText.match(jsonRegex);
+      if (chartMatch && (activeAgent === Agent.DATA_ANALYSIS || activeAgent === Agent.DASHBOARD)) {
+          try {
+              chartData = JSON.parse(chartMatch[1]);
+              textPart = responseText.replace(jsonRegex, '').trim();
+          } catch (e) { console.error("Failed to parse chart JSON:", e); }
+      }
+      const suggestionMatches = [...textPart.matchAll(suggestionRegex)];
+      if (suggestionMatches.length > 0) {
+          suggestions = suggestionMatches.map(match => match[1].trim().replace(/^"|"$/g, ''));
+      }
+      return { text: textPart, chart: chartData, suggestions };
   };
 
   const processAndDisplayResponse = (responseText: string, messageId: string, sources?: any[]) => {
-      const jsonRegex = /```json\n([\s\S]*?)\n```/;
-      const match = responseText.match(jsonRegex);
-
-      if (match && activeAgent === Agent.DATA_ANALYSIS) {
-          try {
-              const chartData: ChartData = JSON.parse(match[1]);
-              const textPart = responseText.replace(jsonRegex, '').trim();
-              setMessages(prev => prev.map(m => m.id === messageId ? { ...m, text: textPart, chart: chartData, isLoading: false, sources } : m));
-          } catch (e) {
-              console.error("Failed to parse chart JSON:", e);
-              setMessages(prev => prev.map(m => m.id === messageId ? { ...m, text: responseText, isLoading: false, sources } : m));
-          }
-      } else {
-          setMessages(prev => prev.map(m => m.id === messageId ? { ...m, text: responseText, isLoading: false, sources } : m));
-      }
+      const { text, chart, suggestions } = parseResponse(responseText);
+      updateCurrentProject(p => ({
+          ...p,
+          messages: p.messages.map(m => m.id === messageId ? { ...m, text, chart, suggestions, isLoading: false, sources } : m)
+      }));
   }
 
   const handlePresentationAi = async (prompt: string, userMessage: Message) => {
-    setPresentationMessages(prev => [...prev, userMessage]);
+    if (!currentProject || !currentProject.presentation) return;
+
+    updateCurrentProject(p => ({ ...p, presentationMessages: [...p.presentationMessages, userMessage] }));
     const botMessageId = (Date.now() + 1).toString();
     const loadingMessage: Message = { id: botMessageId, sender: 'bot', isLoading: true };
-    setPresentationMessages(prev => [...prev, loadingMessage]);
+    updateCurrentProject(p => ({ ...p, presentationMessages: [...p.presentationMessages, loadingMessage] }));
 
     try {
+        const { presentation, selectedSlideId, selectedObjectIds } = currentProject;
         const selectedSlide = presentation.slides.find(s => s.id === selectedSlideId);
         const selectedImage = selectedSlide?.objects.find(o => selectedObjectIds.length === 1 && o.id === selectedObjectIds[0] && o.type === 'image') as SlideObject | undefined;
         const selectedImageDataUrl = (selectedImage?.content as ImageContent)?.src;
 
         const result = await geminiService.understandPresentationPrompt(prompt, selectedImageDataUrl);
         
+        const updateBotMessage = (update: Partial<Message>) => {
+            updateCurrentProject(p => ({
+                ...p,
+                presentationMessages: p.presentationMessages.map(m => m.id === botMessageId ? {...m, ...update} : m)
+            }));
+        };
+
+        const handleSetPresentation = (newPresentation: Presentation, newHistoryEntry = true) => {
+            updateCurrentProject(p => {
+                const history = newHistoryEntry ? p.presentationHistory.slice(0, p.presentationHistoryIndex + 1) : p.presentationHistory;
+                const newHistory = newHistoryEntry ? [...history, newPresentation] : history.map((pres, i) => i === p.presentationHistoryIndex ? newPresentation : pres);
+                return {
+                    ...p,
+                    presentation: newPresentation,
+                    presentationHistory: newHistory,
+                    presentationHistoryIndex: newHistoryEntry ? history.length : p.presentationHistoryIndex
+                }
+            });
+        };
+
         switch (result.type) {
             case 'generate_image':
-                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: "Generating image...", isLoading: false, isThinking: true } : m));
+                updateBotMessage({ text: "Generating image...", isLoading: false, isThinking: true });
                 const newImageSrc = await geminiService.generateImage(result.prompt, result.aspectRatio);
-                const imageContent: ImageContent = {
-                    src: newImageSrc,
-                    altText: result.prompt,
-                    borderRadius: 0,
-                    borderColor: '#000000',
-                    borderWidth: 0,
-                    objectFit: 'cover',
-                    filters: { brightness: 100, contrast: 100, saturate: 100, grayscale: 0, sepia: 0, blur: 0 }
-                };
-
-                if (selectedImage) { // Replace existing image
+                const imageContent: ImageContent = { src: newImageSrc, altText: result.prompt, borderRadius: 0, borderColor: '#000000', borderWidth: 0, objectFit: 'cover', filters: { brightness: 100, contrast: 100, saturate: 100, grayscale: 0, sepia: 0, blur: 0 }};
+                if (selectedImage) {
                     const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: s.objects.map(o => o.id === selectedImage.id ? { ...o, content: imageContent } : o) } : s);
                     handleSetPresentation({ ...presentation, slides: newSlides });
-                } else { // Add new image
-                    const newImageObject: SlideObject = {
-                        id: `obj-img-${Date.now()}`, type: 'image', x: 100, y: 100, width: 600, height: 400,
-                        rotation: 0,
-                        flipX: false,
-                        flipY: false,
-                        opacity: 1,
-                        animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false }, 
-                        exitAnimation: null,
-                        content: imageContent
-                    };
+                } else {
+                    const newImageObject: SlideObject = { id: `obj-img-${Date.now()}`, type: 'image', x: 100, y: 100, width: 600, height: 400, rotation: 0, flipX: false, flipY: false, opacity: 1, animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false }, exitAnimation: null, content: imageContent };
                     const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: [...s.objects, newImageObject] } : s);
                     handleSetPresentation({ ...presentation, slides: newSlides });
                 }
-                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: "Here is the generated image.", image: newImageSrc } : m));
+                updateBotMessage({ isThinking: false, text: "Here is the generated image.", image: newImageSrc });
                 break;
             
             case 'generate_video':
-                 setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: "Generating video... This can take a few minutes.", isLoading: false, isThinking: true } : m));
+                updateBotMessage({ text: "Generating video... This can take a few minutes.", isLoading: false, isThinking: true });
                 try {
                     const { videoSrc, thumbnailSrc } = await geminiService.generateVideo(result.prompt, selectedImageDataUrl);
                     const videoContent: VideoContent = { src: videoSrc, thumbnail: thumbnailSrc };
-                    const newVideoObject: SlideObject = {
-                        id: `obj-vid-${Date.now()}`, type: 'video', x: 100, y: 100, width: 640, height: 360,
-                        rotation: 0,
-                        flipX: false,
-                        flipY: false,
-                        opacity: 1,
-                        animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false }, 
-                        exitAnimation: null,
-                        content: videoContent
-                    };
+                    const newVideoObject: SlideObject = { id: `obj-vid-${Date.now()}`, type: 'video', x: 100, y: 100, width: 640, height: 360, rotation: 0, flipX: false, flipY: false, opacity: 1, animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false }, exitAnimation: null, content: videoContent };
                     const newSlides = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: [...s.objects, newVideoObject] } : s);
                     handleSetPresentation({ ...presentation, slides: newSlides });
-                    setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: "Here is the generated video.", video: videoSrc } : m));
+                    updateBotMessage({ isThinking: false, text: "Here is the generated video.", video: videoSrc });
                 } catch(e) {
                     if (e instanceof Error && e.message.includes('API key')) {
                         setIsApiKeyModalOpen(true);
-                         setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: e.message } : m));
-                    } else {
-                        throw e; // re-throw other errors
-                    }
+                        updateBotMessage({ isThinking: false, text: e.message });
+                    } else { throw e; }
                 }
                 break;
 
             case 'edit_image':
                 if (!selectedImageDataUrl) {
-                    setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: "Please select an image first to edit it." } : m));
+                    updateBotMessage({ isLoading: false, text: "Please select an image first to edit it." });
                     return;
                 }
-                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: "Editing image...", isLoading: false, isThinking: true } : m));
+                updateBotMessage({ text: "Editing image...", isLoading: false, isThinking: true });
                 const editedImageSrc = await geminiService.editImage(selectedImageDataUrl, result.prompt);
                 const editedImageContent: ImageContent = { ...(selectedImage!.content as ImageContent), src: editedImageSrc };
                 const newSlidesEdited = presentation.slides.map(s => s.id === selectedSlideId ? { ...s, objects: s.objects.map(o => o.id === selectedImage!.id ? { ...o, content: editedImageContent } : o) } : s);
                 handleSetPresentation({ ...presentation, slides: newSlidesEdited });
-                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isThinking: false, text: "Here is the edited image.", image: editedImageSrc } : m));
+                updateBotMessage({ isThinking: false, text: "Here is the edited image.", image: editedImageSrc });
                 break;
 
             case 'presentation_edit':
                 const updatedPresentation = await geminiService.editPresentation(prompt, presentation);
                 handleSetPresentation(updatedPresentation);
-                setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: "Done! I've updated the presentation." } : m));
+                updateBotMessage({ isLoading: false, text: "Done! I've updated the presentation." });
                 break;
         }
     } catch(error) {
         console.error("Error with presentation AI:", error);
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
-        setPresentationMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: `Sorry, I couldn't do that: ${errorMessage}` } : m));
+        updateCurrentProject(p => ({
+            ...p,
+            presentationMessages: p.presentationMessages.map(m => m.id === botMessageId ? { ...m, isLoading: false, text: `Sorry, I couldn't do that: ${errorMessage}` } : m)
+        }));
     }
   }
 
-
   const handleSendMessage = async (prompt: string, file?: File) => {
-    const userMessage: Message = { 
-        id: Date.now().toString(), 
-        sender: 'user', 
-        text: prompt,
-        fileInfo: file ? { name: file.name } : undefined
-    };
-    
     if (activeAgent === Agent.PRESENTATION) {
+        const userMessage: Message = { id: Date.now().toString(), sender: 'user', text: prompt };
         await handlePresentationAi(prompt, userMessage);
         return;
     }
-
-    // Image Analysis Logic for Data Analysis Agent
-    if (file && file.type.startsWith('image/')) {
-        try {
-            const imageDataUrl = await readFileAsDataURL(file);
-            const userImageMessage: Message = {
-                id: Date.now().toString(),
-                sender: 'user',
-                text: prompt,
-                image: imageDataUrl,
-                fileInfo: { name: file.name }
-            };
-            setMessages(prev => [...prev, userImageMessage]);
-
-            const botMessageId = (Date.now() + 1).toString();
-            const loadingMessage: Message = { id: botMessageId, sender: 'bot', isLoading: true };
-            setMessages(prev => [...prev, loadingMessage]);
-
-            const response = await geminiService.analyzeImage(imageDataUrl, prompt);
-            setMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: response.text, isLoading: false } : m));
-
-        } catch (error) {
-            console.error("Error analyzing image:", error);
-            const errorMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                sender: 'bot',
-                text: `Sorry, I couldn't analyze the image. Error: ${error instanceof Error ? error.message : 'Unknown error'}`
-            };
-            // Add user message with image first, then error
-            const userImageMessage: Message = {
-                id: userMessage.id,
-                sender: 'user',
-                text: prompt,
-                fileInfo: { name: file.name }
-            };
-            setMessages(prev => [...prev, userImageMessage, errorMessage]);
-        }
-        return; // Exit after handling image
-    }
-
+    if (!currentProject) return;
+    const userMessage: Message = { id: Date.now().toString(), sender: 'user', text: prompt, fileInfo: file ? { name: file.name } : undefined };
 
     let messagesToAdd: Message[] = [userMessage];
     let contextForPrompt: string | null = null;
+    let newDataContext = currentProject.dataContext;
     
-    if (file) {
+    if (activeAgent === Agent.DASHBOARD && currentProject.dashboardData) {
+        contextForPrompt = toCsv(currentProject.dashboardData);
+    } else if (file) {
         try {
             let fileContent = await readFileContent(file);
             if (fileContent.length > MAX_DATA_CONTEXT_LENGTH) {
                 fileContent = fileContent.substring(0, MAX_DATA_CONTEXT_LENGTH);
-                messagesToAdd.push({
-                    id: Date.now().toString() + "-truncation",
-                    sender: 'bot',
-                    text: `(Note: The uploaded file is very large. To proceed, only the beginning of the file will be analyzed.)`
-                });
+                messagesToAdd.push({ id: Date.now().toString() + "-truncation", sender: 'bot', text: `(Note: The uploaded file is very large. Only the beginning will be analyzed.)` });
             }
-            setDataContext(fileContent);
+            newDataContext = fileContent;
             contextForPrompt = fileContent;
         } catch (error) {
-             console.error("Error reading file:", error);
-            const errorMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                sender: 'bot',
-                text: `Sorry, I couldn't read the file. It might be corrupted or in an unsupported format. Error: ${error instanceof Error ? error.message : 'Unknown error'}`
-            };
-            setMessages(prev => [...prev, userMessage, errorMessage]);
-            return;
+             const errorMessage: Message = { id: (Date.now() + 1).toString(), sender: 'bot', text: `Sorry, I couldn't read the file. Error: ${error instanceof Error ? error.message : 'Unknown error'}` };
+             updateCurrentProject(p => ({ ...p, messages: [...p.messages, userMessage, errorMessage] }));
+             return;
         }
     } else {
-        contextForPrompt = dataContext;
+        contextForPrompt = currentProject.dataContext;
     }
-
-    setMessages(prev => [...prev, ...messagesToAdd]);
-
+    
     const botMessageId = (Date.now() + 1).toString();
     const loadingMessage: Message = { id: botMessageId, sender: 'bot', isLoading: true, isThinking: isThinkingMode };
-    setMessages(prev => [...prev, loadingMessage]);
+    updateCurrentProject(p => ({ ...p, messages: [...p.messages, ...messagesToAdd, loadingMessage], dataContext: newDataContext }));
 
     try {
-        let response;
-        let promptForApi = prompt;
-        let systemInstructionForApi = "";
-
         const hasDataContext = !!contextForPrompt;
+        let promptForApi = prompt;
+        
+        const systemInstruction = hasDataContext 
+            ? `You are an expert Data Analyst AI. The user has provided a dataset. Your goal is to help them understand it.
+- When the user asks for a visual, chart, plot, or graph, YOU MUST respond with a valid JSON object formatted for the Recharts library.
+- NEVER, under any circumstances, respond with Python code or any other programming language. Your output for a visual MUST be the specified JSON format.
+- The JSON should be in a markdown block like this: \`\`\`json\n{...}\n\`\`\`
+- For bar, line, or pie charts, use the format: { "type": "bar", "data": [...], "dataKey": "...", "nameKey": "..." }
+- For scatter plots, use the format: { "type": "scatter", "data": [{"x": 1, "y": 2}, ...], "xKey": "...", "yKey": "...", "xAxisLabel": "...", "yAxisLabel": "..." }
+- Also provide a brief text description of the chart's insights.
+- If you are asked a general question, provide a text response.`
+            : "You are a friendly and helpful AI assistant...";
 
-        if (hasDataContext && !prompt.trim()) {
-            promptForApi = `The user has just uploaded a dataset. Perform a comprehensive, automatic Exploratory Data Analysis (EDA).
-Follow these steps and structure your response exactly as described:
-1.  **Data Overview**: Provide a brief summary of the dataset. Mention the number of rows and columns, and list the column names with their inferred data types (e.g., numerical, categorical, date).
-2.  **Initial Findings & Missing Values**: Describe any immediate observations. Report the number and percentage of missing values for each column.
-3.  **Suggested EDA Steps**: Propose a numbered list of 3-5 specific questions the user could ask to explore this data further. These should be insightful questions that could lead to interesting visualizations or discoveries. For example: "What is the distribution of values in the 'price' column?" or "How does 'category' relate to 'sales'?".
-4.  **Recommended Visualizations**: Based on the data, suggest a list of suitable chart types (e.g., histogram, bar chart, scatter plot) that would be effective for analysis.
-
-IMPORTANT: Do not generate any charts or JSON in this initial analysis. Your entire response should be text-based markdown. Your goal is to give the user a comprehensive starting point and guide them on what to ask next.
-
-Data content:
-\`\`\`
-${contextForPrompt}
-\`\`\`
-`;
-            systemInstructionForApi = `You are a helpful and proactive Data Analysis AI. Your goal is to perform an automatic, comprehensive EDA on the user's uploaded dataset to give them a great starting point for their analysis.`;
-        } else {
-            const chartInstructions = `You are an expert Data Analyst AI...`; // (rest of prompt)
-            const generalChatInstruction = "You are a friendly and helpful AI assistant...";
-            systemInstructionForApi = hasDataContext ? chartInstructions : generalChatInstruction;
-            if (contextForPrompt) {
-                promptForApi = `Data context:\n\`\`\`\n${contextForPrompt}\n\`\`\`\n\nUser query: ${prompt}`;
-            }
+        if (contextForPrompt) {
+            promptForApi = `Data context:\n\`\`\`\n${contextForPrompt}\n\`\`\`\n\nUser query: ${prompt}`;
         }
-
-        response = await geminiService.generateText(promptForApi, isThinkingMode, systemInstructionForApi);
+        
+        const response = await geminiService.generateText(promptForApi, isThinkingMode, systemInstruction);
         processAndDisplayResponse(response.text, botMessageId, response.sources);
         
     } catch (error) {
         console.error("Error calling Gemini API:", error);
-        setMessages(prev => prev.map(m => m.id === botMessageId ? { ...m, text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`, isLoading: false } : m));
+        updateCurrentProject(p => ({ ...p, messages: p.messages.map(m => m.id === botMessageId ? { ...m, text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`, isLoading: false } : m) }));
     }
   };
 
-  const startVoice = useCallback(async () => {
-    if (isVoiceRecording) return;
-    try {
-        setIsVoiceRecording(true);
-        setMessages(prev => [...prev, {id: 'voice-start', sender: 'bot', text: 'Voice conversation started. Speak now...'}]);
+  const handleSaveConnection = async (connection: DataConnection, fileContent?: string, shouldAnalyze?: boolean) => {
+    if (!currentProject) return;
+    const connectionWithContent: DataConnection = { ...connection, fileContent };
+    
+    const exists = currentProject.dataConnections.some(c => c.id === connectionWithContent.id);
+    updateCurrentProject(p => ({
+        ...p,
+        dataConnections: exists ? p.dataConnections.map(c => c.id === connectionWithContent.id ? connectionWithContent : c) : [...p.dataConnections, connectionWithContent]
+    }));
 
-        inputAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        outputAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    if (shouldAnalyze && fileContent) {
+        setIsDashboardGenerating(true);
+        try {
+            const parsedData = parseCsv(fileContent);
+            const dashboardLayout = await mcpService.generateDashboardFromData(fileContent);
+            updateCurrentProject(p => ({
+                ...p,
+                dashboardData: parsedData,
+                dashboardItems: dashboardLayout
+            }));
+            setActiveAgent(Agent.DASHBOARD);
+        } catch (error) {
+            console.error("Dashboard generation failed:", error);
+            const errorMsg: Message = { id: Date.now().toString(), sender: 'bot', text: `Failed to generate dashboard: ${error instanceof Error ? error.message : "An unknown error occurred."}`};
+            updateCurrentProject(p => ({ ...p, messages: [errorMsg], dashboardData: null, dashboardItems: [] }));
+            setActiveAgent(Agent.DATA_ANALYSIS);
+        } finally {
+            setIsDashboardGenerating(false);
+        }
+    }
+  };
+
+  const handleDeleteDashboardItem = (itemId: string) => {
+    updateCurrentProject(p => ({
+        ...p,
+        dashboardItems: p.dashboardItems.filter(item => item.id !== itemId)
+    }));
+  };
+
+  const handleLayoutChange = (layout: Layout[]) => {
+    updateCurrentProject(p => ({
+        ...p,
+        dashboardItems: p.dashboardItems.map(item => {
+            const layoutItem = layout.find(l => l.i === item.id);
+            if (layoutItem) {
+                return { ...item, layout: { x: layoutItem.x, y: layoutItem.y, w: layoutItem.w, h: layoutItem.h } };
+            }
+            return item;
+        }).filter(Boolean)
+    }));
+  };
+  
+  const stopVoice = useCallback(() => {
+    if (!isVoiceRecording) return;
+
+    liveSessionRef.current?.close();
+    liveSessionRef.current = null;
+
+    audioStreamRef.current?.getTracks().forEach(track => track.stop());
+    audioStreamRef.current = null;
+
+    if (scriptProcessorRef.current && inputAudioContextRef.current) {
+        scriptProcessorRef.current.disconnect();
+        scriptProcessorRef.current = null;
+    }
+
+    inputAudioContextRef.current?.close();
+    inputAudioContextRef.current = null;
+
+    outputAudioContextRef.current?.close();
+    outputAudioContextRef.current = null;
+    
+    audioSourcesRef.current.forEach(source => source.stop());
+    audioSourcesRef.current.clear();
+
+    setIsVoiceRecording(false);
+    
+    updateCurrentProject(p => ({
+        ...p,
+        messages: [...p.messages, { id: Date.now().toString(), sender: 'bot', text: "Voice conversation ended." }]
+    }));
+  }, [isVoiceRecording]);
+
+  const startVoice = useCallback(async () => {
+    if (isVoiceRecording) {
+      stopVoice();
+      return;
+    }
+
+    if (!currentProject) return;
+    
+    updateCurrentProject(p => ({
+        ...p,
+        messages: [{ id: Date.now().toString(), sender: 'bot', text: "Voice conversation started. Start speaking..." }]
+    }));
+
+    setIsVoiceRecording(true);
+
+    try {
+        const inputAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        inputAudioContextRef.current = inputAudioContext;
+        const outputAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        outputAudioContextRef.current = outputAudioContext;
+        
         nextAudioStartTimeRef.current = 0;
-        audioSourcesRef.current.clear();
         currentTranscriptionRef.current = { input: '', output: '' };
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioStreamRef.current = stream;
 
         const sessionPromise = geminiService.startLiveSession({
+            onopen: () => {
+                const source = inputAudioContext.createMediaStreamSource(stream);
+                const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
+                scriptProcessorRef.current = scriptProcessor;
+
+                scriptProcessor.onaudioprocess = (audioProcessingEvent: AudioProcessingEvent) => {
+                    const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                    const pcmBlob = createPcmBlob(inputData);
+                    sessionPromise.then((session) => {
+                        session.sendRealtimeInput({ media: pcmBlob });
+                    });
+                };
+                source.connect(scriptProcessor);
+                scriptProcessor.connect(inputAudioContext.destination);
+            },
             onmessage: async (message: LiveServerMessage) => {
                 const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
                 if (base64Audio && outputAudioContextRef.current) {
-                    nextAudioStartTimeRef.current = Math.max(nextAudioStartTimeRef.current, outputAudioContextRef.current.currentTime);
-                    const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContextRef.current, 24000, 1);
-                    const source = outputAudioContextRef.current.createBufferSource();
+                    const outputAudioContext = outputAudioContextRef.current;
+                    const nextStartTime = Math.max(nextAudioStartTimeRef.current, outputAudioContext.currentTime);
+                    nextAudioStartTimeRef.current = nextStartTime;
+
+                    const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContext, 24000, 1);
+                    const source = outputAudioContext.createBufferSource();
                     source.buffer = audioBuffer;
-                    source.connect(outputAudioContextRef.current.destination);
-                    source.addEventListener('ended', () => audioSourcesRef.current.delete(source));
-                    source.start(nextAudioStartTimeRef.current);
+                    source.connect(outputAudioContext.destination);
+                    source.addEventListener('ended', () => {
+                        audioSourcesRef.current.delete(source);
+                    });
+                    source.start(nextStartTime);
                     nextAudioStartTimeRef.current += audioBuffer.duration;
                     audioSourcesRef.current.add(source);
                 }
 
+                const interrupted = message.serverContent?.interrupted;
+                if (interrupted) {
+                    for (const source of audioSourcesRef.current.values()) {
+                      source.stop();
+                    }
+                    audioSourcesRef.current.clear();
+                    nextAudioStartTimeRef.current = 0;
+                }
+                
                 if (message.serverContent?.inputTranscription) {
                     currentTranscriptionRef.current.input += message.serverContent.inputTranscription.text;
                 }
@@ -421,183 +489,169 @@ ${contextForPrompt}
                     currentTranscriptionRef.current.output += message.serverContent.outputTranscription.text;
                 }
                 if (message.serverContent?.turnComplete) {
-                    const fullInput = currentTranscriptionRef.current.input.trim();
-                    const fullOutput = currentTranscriptionRef.current.output.trim();
-                    if (fullInput) setMessages(prev => [...prev, { id: `transcript-in-${Date.now()}`, sender: 'user', text: fullInput }]);
-                    if (fullOutput) setMessages(prev => [...prev, { id: `transcript-out-${Date.now()}`, sender: 'bot', text: fullOutput }]);
+                    if (currentTranscriptionRef.current.input) {
+                        updateCurrentProject(p => ({ ...p, messages: [...p.messages, { id: `transcript-in-${Date.now()}`, sender: 'user', transcript: { type: 'input', text: currentTranscriptionRef.current.input } }] }));
+                    }
+                     if (currentTranscriptionRef.current.output) {
+                        updateCurrentProject(p => ({ ...p, messages: [...p.messages, { id: `transcript-out-${Date.now()}`, sender: 'bot', transcript: { type: 'output', text: currentTranscriptionRef.current.output } }] }));
+                    }
                     currentTranscriptionRef.current = { input: '', output: '' };
                 }
-
-                if (message.serverContent?.interrupted) {
-                    for (const source of audioSourcesRef.current.values()) {
-                        source.stop();
-                        audioSourcesRef.current.delete(source);
-                    }
-                    nextAudioStartTimeRef.current = 0;
-                }
             },
-            onerror: (e) => {
+            onerror: (e: ErrorEvent) => {
                 console.error("Live session error:", e);
-                setMessages(prev => [...prev, { id: 'voice-error', sender: 'bot', text: `Voice error: ${e.type}` }]);
+                updateCurrentProject(p => ({...p, messages: [...p.messages, { id: Date.now().toString(), sender: 'bot', text: `Voice Error: ${e.message}` }] }));
                 stopVoice();
             },
-            onclose: () => {
+            onclose: (e: CloseEvent) => {
                 console.log("Live session closed.");
-            }
+                if (isVoiceRecording) {
+                    stopVoice();
+                }
+            },
         });
         
         liveSessionRef.current = await sessionPromise;
 
-        const source = inputAudioContextRef.current.createMediaStreamSource(stream);
-        const scriptProcessor = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
-        scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-            const pcmBlob = createPcmBlob(inputData);
-            // Fix: Use session promise to send data to avoid race conditions and stale refs, per guidelines.
-            sessionPromise.then(session => {
-              session.sendRealtimeInput({ media: pcmBlob });
-            });
-        };
-        source.connect(scriptProcessor);
-        scriptProcessor.connect(inputAudioContextRef.current.destination);
-        scriptProcessorRef.current = scriptProcessor;
-
     } catch (error) {
-        console.error("Failed to start voice conversation:", error);
-        setMessages(prev => [...prev, { id: 'voice-setup-error', sender: 'bot', text: `Could not start voice: ${error instanceof Error ? error.message : 'Unknown error'}` }]);
+        console.error("Failed to start voice session:", error);
+        updateCurrentProject(p => ({...p, messages: [...p.messages, { id: Date.now().toString(), sender: 'bot', text: `Could not start voice session: ${error instanceof Error ? error.message : "Unknown error"}` }] }));
         setIsVoiceRecording(false);
     }
-  }, [isVoiceRecording]);
+  }, [isVoiceRecording, stopVoice, currentProject]);
 
-  const stopVoice = useCallback(() => {
-    if (!isVoiceRecording) return;
-    
-    liveSessionRef.current?.close();
-    liveSessionRef.current = null;
+  useEffect(() => { return () => { if (isVoiceRecording) stopVoice(); } }, [isVoiceRecording, stopVoice]);
 
-    audioStreamRef.current?.getTracks().forEach(track => track.stop());
-    audioStreamRef.current = null;
-
-    scriptProcessorRef.current?.disconnect();
-    scriptProcessorRef.current = null;
-
-    inputAudioContextRef.current?.close();
-    outputAudioContextRef.current?.close();
-
-    for (const source of audioSourcesRef.current.values()) {
-        source.stop();
-    }
-    audioSourcesRef.current.clear();
-    
-    setIsVoiceRecording(false);
-    setMessages(prev => [...prev, {id: 'voice-end', sender: 'bot', text: 'Voice conversation ended.'}]);
-
-  }, [isVoiceRecording]);
-
-  useEffect(() => {
-      return () => {
-          if(isVoiceRecording) stopVoice();
-      }
-  }, [isVoiceRecording, stopVoice]);
-  
   const renderMainContent = () => {
-    const suggestions = [
-      "Upload a CSV and find correlations",
-      "Explain the key insights from my data file",
-      "Create a bar chart of sales by region",
-      "Summarize this dataset for me"
-    ];
-
+    if (!currentProjectId || !currentProject) {
+        return <ProjectsView projects={projects} onSelectProject={handleSelectProject} onCreateProject={handleCreateProject} />
+    }
+    
     switch(activeAgent) {
+        case Agent.DATA_CONNECTIONS:
+            return <DataConnectionsView projectConnections={currentProject.dataConnections} allProjects={projects} onSaveConnection={handleSaveConnection} />;
         case Agent.DASHBOARD:
-            return <DashboardView items={dashboardItems} />;
+            return <DashboardView 
+                        items={currentProject.dashboardItems} 
+                        dashboardData={currentProject.dashboardData} 
+                        activeFilters={currentProject.activeFilters} 
+                        onFilterChange={(column, value) => updateCurrentProject(p => ({ ...p, activeFilters: { ...p.activeFilters, [column]: value } }))}
+                        onClearFilters={() => updateCurrentProject(p => ({ ...p, activeFilters: {} }))}
+                        onChartTypeChange={(itemId, newType) => updateCurrentProject(p => ({ ...p, dashboardItems: p.dashboardItems.map(item => item.id === itemId && item.type === 'chart' ? { ...item, data: { ...item.data, type: newType } as ChartData } : item) }))}
+                        onLayoutChange={handleLayoutChange}
+                        onDeleteItem={handleDeleteDashboardItem}
+                        messages={currentProject.messages}
+                        onSendMessage={handleSendMessage}
+                        isThinkingMode={isThinkingMode}
+                        onThinkingChange={setIsThinkingMode}
+                        isVoiceRecording={isVoiceRecording}
+                        onVoiceRecordStart={startVoice}
+                        onVoiceRecordStop={stopVoice}
+                        onSaveToDashboard={handleSaveToDashboard}
+                    />;
         case Agent.PRESENTATION:
-            if (isPresenting && presentation) {
-                return <PresentationPlayer presentation={presentation} onExit={() => setIsPresenting(false)} />
+            if (isPresenting && currentProject.presentation) {
+                return <PresentationPlayer presentation={currentProject.presentation} onExit={() => setIsPresenting(false)} />
             }
-            if (presentation) {
+            if (currentProject.presentation) {
                 return <PresentationWorkspace 
-                            presentation={presentation}
-                            dashboardItems={dashboardItems}
-                            onPresentationChange={handleSetPresentation}
-                            onUndo={handleUndo}
-                            onRedo={handleRedo}
-                            canUndo={canUndo}
-                            canRedo={canRedo}
+                            presentation={currentProject.presentation}
+                            dashboardItems={currentProject.dashboardItems.filter(item => item.type === 'chart') as ChartItem[]}
+                            onPresentationChange={(newPres: Presentation, historyEntry?: boolean) => {
+                                const { presentationHistory, presentationHistoryIndex } = currentProject;
+                                const newHistory = historyEntry ? presentationHistory.slice(0, presentationHistoryIndex + 1) : presentationHistory;
+                                const finalHistory = historyEntry ? [...newHistory, newPres] : newHistory.map((pres, i) => i === presentationHistoryIndex ? newPres : pres);
+                                updateCurrentProject(p => ({ ...p, presentation: newPres, presentationHistory: finalHistory, presentationHistoryIndex: historyEntry ? newHistory.length : presentationHistoryIndex }));
+                            }}
+                            onUndo={() => updateCurrentProject(p => ({...p, presentationHistoryIndex: Math.max(0, p.presentationHistoryIndex - 1), presentation: p.presentationHistory[p.presentationHistoryIndex - 1] || p.presentation }))}
+                            onRedo={() => updateCurrentProject(p => ({...p, presentationHistoryIndex: Math.min(p.presentationHistory.length - 1, p.presentationHistoryIndex + 1), presentation: p.presentationHistory[p.presentationHistoryIndex + 1] || p.presentation}))}
+                            canUndo={currentProject.presentationHistoryIndex > 0}
+                            canRedo={currentProject.presentationHistoryIndex < currentProject.presentationHistory.length - 1}
                             onPresent={() => setIsPresenting(true)}
-                            messages={presentationMessages}
+                            messages={currentProject.presentationMessages}
                             onSendMessage={handleSendMessage}
-                            selectedSlideId={selectedSlideId}
-                            onSelectSlide={setSelectedSlideId}
-                            selectedObjectIds={selectedObjectIds}
-                            onSelectObjects={setSelectedObjectIds}
+                            selectedSlideId={currentProject.selectedSlideId}
+                            onSelectSlide={(id) => updateCurrentProject(p => ({ ...p, selectedSlideId: id }))}
+                            selectedObjectIds={currentProject.selectedObjectIds}
+                            onSelectObjects={(ids) => updateCurrentProject(p => ({ ...p, selectedObjectIds: ids }))}
                         />;
             }
-            return null; // Should not happen with the new logic
+            return null;
         case Agent.DATA_ANALYSIS:
         default:
+            const initialSuggestions = [ "Upload a CSV and find correlations", "Explain the key insights from my data file", "Create a bar chart of sales by region", "Summarize this dataset for me" ];
+            const lastBotMessageWithSuggestions = [...currentProject.messages].reverse().find(m => m.sender === 'bot' && m.suggestions && m.suggestions.length > 0);
+            const suggestions = currentProject.messages.length === 0 ? initialSuggestions : (lastBotMessageWithSuggestions?.suggestions || []);
+
+
             return (
-                <div className="flex-1 flex flex-col">
+                <div className="flex-1 flex flex-col overflow-hidden">
                     <ChatWindow 
-                        messages={messages} 
+                        messages={currentProject.messages} 
                         onSaveToDashboard={handleSaveToDashboard}
-                        suggestions={suggestions}
-                        onSuggestionClick={(prompt) => handleSendMessage(prompt)}
+                        dataConnections={currentProject.dataConnections.filter(c => c.fileContent)}
+                        hasDataContext={!!currentProject.dataContext}
+                        onSelectDataConnection={(content) => updateCurrentProject(p => ({ ...p, dataContext: content, messages: [{ id: Date.now().toString(), sender: 'bot', text: "Data context set. Ready for questions." }] }))}
                     />
-                    <MessageInput 
-                      onSendMessage={handleSendMessage} 
-                      agent={activeAgent} 
-                      isThinking={isThinkingMode}
-                      onThinkingChange={setIsThinkingMode}
-                      isVoiceRecording={isVoiceRecording}
-                      onVoiceRecordStart={startVoice}
-                      onVoiceRecordStop={stopVoice}
-                      aspectRatio={aspectRatio}
-                      onAspectRatioChange={setAspectRatio}
-                    />
+                    {suggestions.length > 0 && (
+                        <div className="px-4 py-1.5 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700">
+                            <h4 className="text-xs font-semibold mb-1 text-gray-500 dark:text-gray-400">
+                                Suggestions
+                            </h4>
+                            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                                {suggestions.slice(0, 4).map((suggestion, i) => (
+                                    <button
+                                        key={i}
+                                        onClick={() => handleSendMessage(suggestion)}
+                                        className="px-3 py-1 text-sm font-medium bg-white dark:bg-gray-700 rounded-full shadow-sm whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 border border-gray-200 dark:border-gray-600"
+                                    >
+                                        {suggestion}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    <MessageInput onSendMessage={handleSendMessage} agent={activeAgent} isThinking={isThinkingMode} onThinkingChange={setIsThinkingMode} isVoiceRecording={isVoiceRecording} onVoiceRecordStart={startVoice} onVoiceRecordStop={stopVoice} aspectRatio={aspectRatio} onAspectRatioChange={setAspectRatio} />
                 </div>
             );
     }
   };
 
-  const handleSelectApiKey = async () => {
-    // @ts-ignore
-    await window.aistudio.openSelectKey();
-    setIsApiKeyModalOpen(false);
-  }
-
   return (
     <div className="flex h-screen font-sans text-gray-900 dark:text-gray-100">
-      <Sidebar
-        activeAgent={activeAgent}
-        onAgentChange={handleAgentChange}
-        user={user}
-        onLogout={handleLogout}
-        isCollapsed={isSidebarCollapsed}
+      <Sidebar 
+        activeAgent={activeAgent} 
+        onAgentChange={handleAgentChange} 
+        user={user} 
+        onLogout={handleLogout} 
+        isCollapsed={isSidebarCollapsed} 
         onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
+        isProjectView={!currentProjectId}
       />
-      <main className="flex-1 flex flex-col bg-white dark:bg-gray-900/80">
+      <main className="flex-1 flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden">
+        <header className="flex items-center p-2 pl-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50 h-14 flex-shrink-0">
+            {!currentProject ? (
+                 <h1 className="text-lg font-semibold truncate">Your Projects</h1>
+            ) : (
+                <>
+                    <button onClick={handleGoToProjects} className="flex items-center space-x-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">
+                        <ChevronLeftIcon className="w-5 h-5"/>
+                        <span>Projects</span>
+                    </button>
+                    <span className="mx-2 text-gray-300 dark:text-gray-600">/</span>
+                    <h1 className="text-lg font-semibold truncate">{currentProject.name}</h1>
+                </>
+            )}
+        </header>
         {renderMainContent()}
       </main>
-      {isApiKeyModalOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md">
-                <h2 className="text-xl font-bold mb-4">API Key Required for Video Generation</h2>
-                <p className="text-gray-600 dark:text-gray-300 mb-4">
-                    The VEO model for video generation requires you to select your own API key.
-                    Please select a key to proceed. For more information on billing, visit {' '}
-                     <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                        ai.google.dev/gemini-api/docs/billing
-                    </a>.
-                </p>
-                <div className="flex justify-end space-x-2">
-                    <button onClick={() => setIsApiKeyModalOpen(false)} className="px-4 py-2 rounded-md text-gray-700 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">
-                        Cancel
-                    </button>
-                    <button onClick={handleSelectApiKey} className="px-4 py-2 rounded-md text-white bg-blue-600 hover:bg-blue-700">
-                        Select API Key
-                    </button>
-                </div>
+      
+      {isDashboardGenerating && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-8 w-full max-w-md text-center">
+                <ThinkingIcon className="w-12 h-12 text-blue-500 mx-auto animate-spin" />
+                <h2 className="text-2xl font-bold mt-6">AI is building your dashboard...</h2>
+                <p className="text-gray-500 dark:text-gray-400 mt-2">Analyzing data, identifying KPIs, and generating charts. This might take a moment.</p>
             </div>
         </div>
       )}
