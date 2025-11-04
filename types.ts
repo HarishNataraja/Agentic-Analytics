@@ -1,3 +1,5 @@
+// Fix: Import React to resolve "Cannot find namespace 'React'" error for React.FC type.
+import React from 'react';
 
 
 export enum Agent {
@@ -355,4 +357,14 @@ export interface Project {
   selectedObjectIds: string[];
 
   dataConnections: DataConnection[];
+}
+
+// Editor-specific types
+export interface ContextMenuItem {
+  label: string;
+  icon: React.FC<{ className?: string }>;
+  action: () => void;
+  disabled?: boolean;
+  isSeparator?: boolean;
+  shortcut?: string;
 }

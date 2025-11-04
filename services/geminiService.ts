@@ -1,7 +1,5 @@
-
-
 // Fix: Import `LiveServerMessage` and `Blob` instead of `LiveSession` and `LiveSessionCallbacks`.
-import { GoogleGenAI, GenerateContentResponse, Modality, LiveServerMessage, Type, Blob, GenerationConfig, FunctionDeclaration, Image } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Modality, LiveServerMessage, Type, Blob, GenerationConfig, FunctionDeclaration, Image, Slide } from "@google/genai";
 // Fix: Import AIStudio from the central types file.
 import { AspectRatio, Presentation, SlideTransition, TextContent, ObjectAnimation, DashboardItem } from "../types";
 
@@ -269,6 +267,7 @@ export const editPresentation = async (prompt: string, currentPresentation: Pres
 - "add a new slide": Add a new slide to the 'slides' array. Give it a unique ID and default notes.
 - "change the title of slide 2": Find the slide with the matching index and modify its title object.
 - "add a text box with 'Hello'": Add a new text object to the current slide's 'objects' array with all default properties.
+- "add a slide about AI with the text 'AI is transforming our world'": Create a new slide. Add a text object for a title, like "The Rise of AI". Add another text object for the body content 'AI is transforming our world'. Style the title to be larger and bolder than the body text, and center both horizontally.
 - "delete slide 3": Remove the slide at the specified index from the 'slides' array.
 - "change the background of the current slide to blue": Modify the 'background' property of the specified slide.
 - "flip the selected image vertically": Set the 'flipY' property of the object to true.
@@ -465,6 +464,7 @@ type PresentationToolResponse =
   | { type: 'generate_image'; prompt: string; aspectRatio: AspectRatio }
   | { type: 'edit_image'; prompt: string }
   | { type: 'generate_video'; prompt: string }
+  | { type: 'layout_slide' }
   | { type: 'presentation_edit' };
 
 export const understandPresentationPrompt = async (prompt: string, selectedImageSrc?: string): Promise<PresentationToolResponse> => {
@@ -505,6 +505,11 @@ export const understandPresentationPrompt = async (prompt: string, selectedImage
                 },
                 required: ['prompt']
             }
+        },
+        {
+            name: 'layout_slide',
+            description: 'Intelligently rearranges the objects on the current slide for a better visual layout. Use for prompts like "arrange this slide", "make it look nice", or "magic layout".',
+            parameters: { type: Type.OBJECT, properties: {} }
         }
     ];
 
@@ -512,6 +517,7 @@ export const understandPresentationPrompt = async (prompt: string, selectedImage
 - If the user wants to create a new image, use \`generate_image\`.
 - If the user wants to modify the currently selected image, use \`edit_image\`.
 - If the user wants to create a new video, use \`generate_video\`.
+- If the user wants to rearrange the current slide, use \`layout_slide\`.
 - For any other request related to changing the presentation (like adding slides, deleting text, changing colors), do not use a tool. The main system will handle it as a general presentation edit.
 - If an image is selected by the user, and their prompt is ambiguous, assume they want to EDIT the image. For example, if an image of a dog is selected and the prompt is "make it a robot dog", use \`edit_image\`. If no image is selected, the same prompt should use \`generate_image\`.
 - If a user asks to "animate this image" or something similar with an image selected, use \`generate_video\`.
@@ -544,10 +550,83 @@ export const understandPresentationPrompt = async (prompt: string, selectedImage
             case 'generate_video':
 // Fix: Add type assertions for function call arguments, which are typed as `unknown`.
                 return { type: 'generate_video', prompt: fc.args.prompt as string };
+            case 'layout_slide':
+                return { type: 'layout_slide' };
             default:
                  return { type: 'presentation_edit' };
         }
     }
 
     return { type: 'presentation_edit' };
+};
+
+export const layoutSlide = async (slide: any): Promise<any> => {
+    const ai = getAiClient();
+    if (!ai) throw new Error("GoogleGenAI not initialized");
+    
+    const objectsForPrompt = slide.objects.map((o: any) => ({
+        id: o.id,
+        type: o.type,
+        width: o.width,
+        height: o.height,
+        text: o.type === 'text' ? (o.content as TextContent).text.substring(0, 100) : undefined
+    }));
+
+    const systemInstruction = `You are an expert presentation designer. Given a JSON array of slide objects, your task is to rearrange them into a visually appealing and professional layout. Maintain the original IDs. Return ONLY a valid JSON array of objects, where each object contains the 'id' and the new 'x', 'y', 'width', and 'height' properties.
+
+**Layout Principles:**
+- **Hierarchy:** Titles should be prominent and at the top.
+- **Alignment:** Align objects to a common grid.
+- **Balance:** Distribute objects evenly.
+- **Proximity:** Group related items.
+- **Whitespace:** Use negative space effectively.
+
+**Canvas Dimensions:** The slide canvas is 1280px wide and 720px high. All coordinates and dimensions must be within these bounds. Objects should not overlap.`;
+    
+    const fullPrompt = `Current slide objects:
+\`\`\`json
+${JSON.stringify(objectsForPrompt)}
+\`\`\`
+Based on the design principles, provide the new layout attributes for these objects.`;
+
+    const layoutSchema = {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                id: { type: Type.STRING },
+                x: { type: Type.NUMBER },
+                y: { type: Type.NUMBER },
+                width: { type: Type.NUMBER },
+                height: { type: Type.NUMBER },
+            },
+            required: ['id', 'x', 'y', 'width', 'height'],
+        }
+    };
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: fullPrompt,
+            config: {
+                systemInstruction,
+                responseMimeType: "application/json",
+                responseSchema: layoutSchema,
+            }
+        });
+        
+        const newLayouts = JSON.parse(response.text) as {id: string; x: number; y: number; width: number; height: number;}[];
+        const layoutMap = new Map(newLayouts.map(l => [l.id, l]));
+
+        const updatedObjects = slide.objects.map((obj: any) => {
+            const newLayout = layoutMap.get(obj.id);
+            return newLayout ? { ...obj, ...newLayout } : obj;
+        });
+
+        return { ...slide, objects: updatedObjects };
+
+    } catch (error) {
+        console.error("Failed to generate slide layout:", error);
+        throw new Error(`The AI failed to generate a new layout. ${error instanceof Error ? error.message : ''}`);
+    }
 };

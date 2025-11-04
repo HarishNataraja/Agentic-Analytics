@@ -246,6 +246,18 @@ const App: React.FC = () => {
                 handleSetPresentation({ ...presentation, slides: newSlidesEdited });
                 updateBotMessage({ isThinking: false, text: "Here is the edited image.", image: editedImageSrc });
                 break;
+            
+            case 'layout_slide':
+                if (!selectedSlide) {
+                    updateBotMessage({ isLoading: false, text: "Please select a slide to rearrange." });
+                    return;
+                }
+                updateBotMessage({ text: "Applying magic layout...", isLoading: false, isThinking: true });
+                const updatedSlide = await geminiService.layoutSlide(selectedSlide);
+                const newSlidesForLayout = presentation.slides.map(s => s.id === selectedSlideId ? updatedSlide : s);
+                handleSetPresentation({ ...presentation, slides: newSlidesForLayout });
+                updateBotMessage({ isThinking: false, text: "Done! Here's the new layout." });
+                break;
 
             case 'presentation_edit':
                 const updatedPresentation = await geminiService.editPresentation(prompt, presentation);

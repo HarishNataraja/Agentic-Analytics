@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Agent, AspectRatio } from '../types';
-import { SendIcon, UploadIcon, MicIcon, StopIcon, ThinkingIcon } from './icons';
+import { SendIcon, UploadIcon, MicIcon, StopIcon, ThinkingIcon, MagicWandIcon } from './icons';
 
 interface MessageInputProps {
   onSendMessage: (prompt: string, file?: File) => void;
@@ -10,6 +10,7 @@ interface MessageInputProps {
   isVoiceRecording: boolean;
   onVoiceRecordStart?: () => void;
   onVoiceRecordStop?: () => void;
+  onMagicLayout?: () => void; // For Presentation Agent
   // Kept for potential future use in presentation agent
   aspectRatio: AspectRatio;
   onAspectRatioChange: (aspectRatio: AspectRatio) => void;
@@ -23,6 +24,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
   isVoiceRecording,
   onVoiceRecordStart,
   onVoiceRecordStop,
+  onMagicLayout,
 }) => {
   const [input, setInput] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -31,6 +33,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const showFileUpload = agent === Agent.DATA_ANALYSIS;
   const showThinkingMode = agent === Agent.DATA_ANALYSIS;
   const canUseVoice = agent === Agent.DATA_ANALYSIS;
+  const canUseMagicLayout = agent === Agent.PRESENTATION && onMagicLayout;
 
   const handleSend = () => {
     if (input.trim() || file) {
@@ -106,6 +109,12 @@ const MessageInput: React.FC<MessageInputProps> = ({
           {canUseVoice && onVoiceRecordStart && (
             <button onClick={onVoiceRecordStart} title="Start Voice Conversation" className="p-2 text-gray-500 hover:text-blue-600 dark:hover:text-blue-400">
                 <MicIcon className="w-5 h-5" />
+            </button>
+          )}
+
+          {canUseMagicLayout && (
+            <button onClick={onMagicLayout} title="Magic Layout" className="p-2 text-gray-500 hover:text-purple-600 dark:hover:text-purple-400">
+                <MagicWandIcon className="w-5 h-5" />
             </button>
           )}
 
