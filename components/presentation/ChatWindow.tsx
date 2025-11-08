@@ -1,4 +1,5 @@
 
+
 import React, { useRef, useEffect } from 'react';
 import { Message } from '../../types';
 import { GeneralChatIcon, ThinkingIcon, UserIcon } from '../icons';
@@ -44,7 +45,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages }) => {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4">
+    <div className="">
       <div className="space-y-6">
         {messages.map((msg) => (
           <div key={msg.id} className="flex items-start gap-3">

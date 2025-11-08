@@ -1,28 +1,68 @@
 
-import React, { useState, useRef, useEffect, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useCallback } from 'react';
-import { Presentation, Slide, SlideObject, DashboardItem, ChartData, TextContent, ImageContent, SlideTransition, ObjectAnimation, ShapeContent, ShapeType, AspectRatio, VideoContent, Shadow, Gradient, ImageFilters, ObjectAnimationPreset, SlideTransitionPreset, AnimationTrigger, ContextMenuItem } from '../../types';
-import { AddSlideIcon, AddTextIcon, AddChartIcon, AddImageIcon, TrashIcon, BringForwardIcon, SendBackwardIcon, BoldIcon, ItalicIcon, UnderlineIcon, AlignLeftIcon, AlignCenterIcon, AlignRightIcon, UndoIcon, RedoIcon, CopyIcon, CutIcon, PasteIcon, DuplicateIcon, PresentIcon, AlignObjectsLeftIcon, AlignObjectsCenterIcon, AlignObjectsRightIcon, AlignObjectsTopIcon, AlignObjectsMiddleIcon, AlignObjectsBottomIcon, ShapesIcon, VideoIcon, PlayIcon, ZoomOutIcon, ZoomInIcon, FitToScreenIcon } from '../icons';
+
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef, useLayoutEffect } from 'react';
+import { Presentation, Slide, SlideObject, ChartData, TextContent, ImageContent, ShapeContent, ShapeType, VideoContent, ContextMenuItem } from '../../types';
+import { PlayIcon, ZoomOutIcon, ZoomInIcon, FitToScreenIcon } from '../icons';
 import ChartRenderer from '../charts/ChartRenderer';
-import { shapeCategories, ShapeIcon, ShapeRenderer } from './shapes';
+import { ShapeRenderer } from './shapes';
 import { readFileAsDataURL } from '../../utils/fileUtils';
-import { OBJECT_ANIMATION_PRESETS, SLIDE_TRANSITION_PRESETS } from './animationPresets';
 import ContextMenu from './ContextMenu';
+
+export type SlideLayoutType = 'title' | 'title_content' | 'blank';
+
+// Fix: Add all required properties to the `content` of type `TextContent` to match the type definition.
+export const slideLayouts: { name: string; type: SlideLayoutType; objects: Partial<SlideObject>[] }[] = [
+  { 
+    name: 'Title Slide', 
+    type: 'title', 
+    objects: [
+      { type: 'text', x: 140, y: 200, width: 1000, height: 120, content: { text: 'Click to edit title', fontSize: 88, fontWeight: 'bold', textAlign: 'center', fontFamily: 'Arial', fontStyle: 'normal', textDecoration: 'none', color: '#000000', backgroundColor: 'transparent', letterSpacing: 0, lineHeight: 1.2, paragraphSpacing: 0, textTransform: 'none', overflow: 'visible', strokeColor: '#000000', strokeWidth: 0, } },
+      { type: 'text', x: 240, y: 350, width: 800, height: 70, content: { text: 'Click to edit subtitle', fontSize: 32, textAlign: 'center', fontFamily: 'Arial', fontWeight: 'normal', fontStyle: 'normal', textDecoration: 'none', color: '#000000', backgroundColor: 'transparent', letterSpacing: 0, lineHeight: 1.2, paragraphSpacing: 0, textTransform: 'none', overflow: 'visible', strokeColor: '#000000', strokeWidth: 0, } },
+    ]
+  },
+  { 
+    name: 'Title and Content', 
+    type: 'title_content', 
+    objects: [
+      { type: 'text', x: 50, y: 40, width: 1180, height: 90, content: { text: 'Click to edit title', fontSize: 54, fontWeight: 'bold', textAlign: 'left', fontFamily: 'Arial', fontStyle: 'normal', textDecoration: 'none', color: '#000000', backgroundColor: 'transparent', letterSpacing: 0, lineHeight: 1.2, paragraphSpacing: 0, textTransform: 'none', overflow: 'visible', strokeColor: '#000000', strokeWidth: 0, } },
+      { type: 'text', x: 50, y: 150, width: 1180, height: 520, content: { text: 'Click to add text', fontSize: 24, textAlign: 'left', lineHeight: 1.5, fontFamily: 'Arial', fontWeight: 'normal', fontStyle: 'normal', textDecoration: 'none', color: '#000000', backgroundColor: 'transparent', letterSpacing: 0, paragraphSpacing: 0, textTransform: 'none', overflow: 'visible', strokeColor: '#000000', strokeWidth: 0, } },
+    ]
+  },
+  { 
+    name: 'Blank', 
+    type: 'blank', 
+    objects: [] 
+  },
+];
 
 
 interface PresentationEditorProps {
   initialPresentation: Presentation;
-  dashboardItems: DashboardItem[];
   onPresentationChange: (presentation: Presentation, newHistoryEntry?: boolean) => void;
   onUndo: () => void;
   onRedo: () => void;
-  canUndo: boolean;
-  canRedo: boolean;
-  onPresent: () => void;
   selectedSlideId: string | null;
   onSelectSlide: (id: string) => void;
   selectedObjectIds: string[];
   onSelectObjects: (ids: string[]) => void;
+  slideWidth: number;
+  slideHeight: number;
 }
+
+export interface PresentationEditorHandles {
+  addSlide: () => void;
+  addTextObject: () => void;
+  addShapeObject: (shape: ShapeType) => void;
+  handleImageUpload: () => void;
+  deleteObjects: (ids: string[]) => void;
+  changeLayer: (direction: 1 | -1) => void;
+  applyLayout: (layoutType: SlideLayoutType) => void;
+  handleCopy: () => void;
+  handleCut: () => void;
+  handlePaste: () => void;
+  handleDuplicate: () => void;
+}
+
 
 type InteractionMode = 'idle' | 'dragging' | 'resizing';
 type ResizeHandle = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -34,25 +74,21 @@ interface ContextMenuState {
   items: ContextMenuItem[];
 }
 
-// Fix: Changed to a named export to resolve module resolution issues.
-export const PresentationEditor: React.FC<PresentationEditorProps> = ({
+const PresentationEditorInternal: React.ForwardRefRenderFunction<PresentationEditorHandles, PresentationEditorProps> = ({
   initialPresentation,
-  dashboardItems,
   onPresentationChange,
   onUndo,
   onRedo,
-  canUndo,
-  canRedo,
-  onPresent,
   selectedSlideId,
   onSelectSlide,
   selectedObjectIds,
   onSelectObjects,
-}) => {
+  slideWidth,
+  slideHeight,
+}, ref) => {
   const presentation = initialPresentation;
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [clipboard, setClipboard] = useState<SlideObject[] | null>(null);
-  const [isShapesMenuOpen, setIsShapesMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ x: 0, y: 0, isVisible: false, items: [] });
   const [scale, setScale] = useState(0.6);
 
@@ -68,22 +104,22 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
   const editorRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const shapesButtonRef = useRef<HTMLDivElement>(null);
-  
+  const historyUpdateTimeoutRef = useRef<number | null>(null);
+
   const selectedSlide = presentation.slides.find(s => s.id === selectedSlideId);
   
   const calculateFitScale = useCallback(() => {
     if (canvasContainerRef.current) {
         const containerWidth = canvasContainerRef.current.clientWidth;
         const containerHeight = canvasContainerRef.current.clientHeight;
-        const padding = 64; // Corresponds to px-8 on each side
-        const scaleX = (containerWidth - padding) / 1280;
-        const scaleY = (containerHeight - padding) / 720;
+        const padding = 64; // p-8 is 2rem on all sides -> 32px * 2 = 64px total horizontal/vertical
+        const scaleX = (containerWidth - padding) / slideWidth;
+        const scaleY = (containerHeight - padding) / slideHeight;
         setScale(Math.max(0.1, Math.min(scaleX, scaleY)));
     }
-  }, []);
+  }, [slideWidth, slideHeight]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     calculateFitScale();
     window.addEventListener('resize', calculateFitScale);
     return () => window.removeEventListener('resize', calculateFitScale);
@@ -96,12 +132,12 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     }
   }, [presentation, selectedSlideId, onSelectSlide]);
   
-  const updateSlide = (slideId: string, newProps: Partial<Slide>, historyEntry = true) => {
+  const updateSlide = useCallback((slideId: string, newProps: Partial<Slide>, historyEntry = true) => {
     const newSlides = presentation.slides.map(s => s.id === slideId ? { ...s, ...newProps } : s);
     onPresentationChange({ ...presentation, slides: newSlides }, historyEntry);
-  };
+  }, [presentation, onPresentationChange]);
   
-  const updateSelectedObjects = (newProps: Partial<SlideObject> | ((obj: SlideObject) => Partial<SlideObject>), historyEntry = false) => {
+  const updateSelectedObjects = useCallback((newProps: Partial<SlideObject> | ((obj: SlideObject) => Partial<SlideObject>), historyEntry = false) => {
     if (!selectedSlideId) return;
     const newSlides = presentation.slides.map(slide => {
         if (slide.id === selectedSlideId) {
@@ -117,15 +153,15 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
         return slide;
     });
     onPresentationChange({ ...presentation, slides: newSlides }, historyEntry);
-  };
+  }, [presentation, onPresentationChange, selectedSlideId, selectedObjectIds]);
   
-  const updateObjectContent = (newContentProps: any, historyEntry = false) => {
+  const updateObjectContent = useCallback((newContentProps: any, historyEntry = false) => {
     updateSelectedObjects(obj => ({
         content: { ...obj.content, ...newContentProps }
     }), historyEntry);
-  };
+  }, [updateSelectedObjects]);
 
-  const addSlide = () => {
+  const addSlide = useCallback(() => {
     const newSlide: Slide = {
         id: `slide-${Date.now()}`,
         background: '#FFFFFF',
@@ -136,9 +172,9 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     const newSlides = [...presentation.slides, newSlide];
     onPresentationChange({ ...presentation, slides: newSlides }, true);
     onSelectSlide(newSlide.id);
-  };
+  }, [presentation, onPresentationChange, onSelectSlide]);
 
-  const addTextObject = () => {
+  const addTextObject = useCallback(() => {
     if (!selectedSlideId) return;
     const newObject: SlideObject = {
         id: `obj-text-${Date.now()}`,
@@ -157,9 +193,9 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     };
     updateSlide(selectedSlideId, { objects: [...selectedSlide!.objects, newObject] });
     onSelectObjects([newObject.id]);
-  };
+  }, [selectedSlideId, selectedSlide, updateSlide, onSelectObjects]);
 
-  const addShapeObject = (shape: ShapeType) => {
+  const addShapeObject = useCallback((shape: ShapeType) => {
      const newObject: SlideObject = {
       id: `obj-shape-${Date.now()}`,
       type: 'shape',
@@ -177,10 +213,9 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     };
     updateSlide(selectedSlideId!, { objects: [...selectedSlide!.objects, newObject] });
     onSelectObjects([newObject.id]);
-    setIsShapesMenuOpen(false);
-  };
+  }, [selectedSlide, selectedSlideId, updateSlide, onSelectObjects]);
   
-  const addImageObject = (src: string, alt: string) => {
+  const addImageObject = useCallback((src: string, alt: string) => {
      const newObject: SlideObject = {
       id: `obj-img-${Date.now()}`,
       type: 'image',
@@ -200,11 +235,46 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     };
     updateSlide(selectedSlideId!, { objects: [...selectedSlide!.objects, newObject] });
     onSelectObjects([newObject.id]);
-  };
+  }, [selectedSlide, selectedSlideId, updateSlide, onSelectObjects]);
 
-  const handleImageUpload = async () => {
+  const applyLayout = useCallback((layoutType: SlideLayoutType) => {
+    if (!selectedSlideId) return;
+    const layout = slideLayouts.find(l => l.type === layoutType);
+    if (!layout) return;
+
+    const newObjects = layout.objects.map(objTmpl => {
+        const baseObject: SlideObject = {
+            id: `obj-${objTmpl.type}-${Date.now()}-${Math.random()}`,
+            type: objTmpl.type || 'text',
+            x: 100, y: 100, width: 300, height: 50,
+            rotation: 0, opacity: 1, flipX: false, flipY: false,
+            animation: { preset: 'fade-in', trigger: 'on-load', duration: 500, delay: 0, loop: false },
+            exitAnimation: null,
+            content: {
+                text: "New Text", fontFamily: 'Arial', fontSize: 24, fontWeight: 'normal', fontStyle: 'normal',
+                textDecoration: 'none', textAlign: 'left', color: '#000000', backgroundColor: 'transparent',
+                letterSpacing: 0, lineHeight: 1.2, paragraphSpacing: 0, textTransform: 'none',
+                overflow: 'visible', strokeColor: '#000000', strokeWidth: 0,
+            }
+        };
+
+        return {
+            ...baseObject,
+            ...objTmpl,
+            content: {
+                ...baseObject.content,
+                ...objTmpl.content
+            }
+        } as SlideObject;
+    });
+
+    updateSlide(selectedSlideId, { objects: newObjects }, true);
+    onSelectObjects([]);
+  }, [selectedSlideId, updateSlide, onSelectObjects]);
+
+  const handleImageUpload = useCallback(() => {
     imageInputRef.current?.click();
-  };
+  }, []);
 
   const onImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
@@ -220,7 +290,7 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     const newObjects = selectedSlide!.objects.filter(obj => !objectIds.includes(obj.id));
     updateSlide(selectedSlideId, { objects: newObjects });
     onSelectObjects([]);
-  }, [selectedSlide, selectedSlideId, onPresentationChange, onSelectObjects]);
+  }, [selectedSlide, selectedSlideId, updateSlide, onSelectObjects]);
 
   const changeLayer = useCallback((direction: 1 | -1) => { // 1 for forward, -1 for backward
     if (!selectedSlideId || selectedObjectIds.length === 0) return;
@@ -245,7 +315,7 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
         }
     }
     updateSlide(selectedSlideId, { objects }, true);
-  }, [selectedSlide, selectedSlideId, selectedObjectIds, onPresentationChange]);
+  }, [selectedSlide, selectedSlideId, selectedObjectIds, updateSlide]);
 
   const handleCopy = useCallback(() => {
     if (!selectedSlide || selectedObjectIds.length === 0) return;
@@ -268,7 +338,7 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     }));
     updateSlide(selectedSlideId, { objects: [...selectedSlide!.objects, ...newObjects] });
     onSelectObjects(newObjects.map(o => o.id));
-  }, [clipboard, selectedSlide, selectedSlideId, onPresentationChange, onSelectObjects]);
+  }, [clipboard, selectedSlide, selectedSlideId, updateSlide, onSelectObjects]);
 
   const handleDuplicate = useCallback(() => {
     if (!selectedSlide || selectedObjectIds.length === 0) return;
@@ -281,7 +351,21 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     }));
     updateSlide(selectedSlideId!, { objects: [...selectedSlide.objects, ...newObjects] });
     onSelectObjects(newObjects.map(o => o.id));
-  }, [selectedSlide, selectedObjectIds, selectedSlideId, onPresentationChange, onSelectObjects]);
+  }, [selectedSlide, selectedObjectIds, selectedSlideId, updateSlide, onSelectObjects]);
+
+    useImperativeHandle(ref, () => ({
+        addSlide,
+        addTextObject,
+        addShapeObject,
+        handleImageUpload,
+        deleteObjects,
+        changeLayer,
+        applyLayout,
+        handleCopy,
+        handleCut,
+        handlePaste,
+        handleDuplicate,
+    }));
   
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (interactionRef.current.mode === 'idle' || !editorRef.current || !selectedSlideId) return;
@@ -328,7 +412,7 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
         }
         updateSelectedObjects({ x: newX, y: newY, width: newWidth, height: newHeight });
     }
-  }, [selectedSlideId, onPresentationChange, presentation, scale]);
+  }, [selectedSlideId, scale, updateSelectedObjects]);
 
   const handleMouseUp = useCallback(() => {
     if (interactionRef.current.mode !== 'idle') {
@@ -346,7 +430,7 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     };
   }, [handleMouseMove, handleMouseUp]);
   
-  const handleObjectMouseDown = (e: ReactMouseEvent<HTMLDivElement>, object: SlideObject) => {
+  const handleObjectMouseDown = (e: React.MouseEvent<HTMLDivElement>, object: SlideObject) => {
     e.stopPropagation();
     
     const isResizing = (e.target as HTMLElement).dataset.handle;
@@ -378,6 +462,15 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
         objectsStart: objectsToInteract.map(o => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
     };
   };
+   
+  const debouncedHistoryUpdate = useCallback(() => {
+    if (historyUpdateTimeoutRef.current) {
+        clearTimeout(historyUpdateTimeoutRef.current);
+    }
+    historyUpdateTimeoutRef.current = window.setTimeout(() => {
+        onPresentationChange(presentation, true);
+    }, 500);
+  }, [presentation, onPresentationChange]);
 
    // Keyboard Shortcuts
    useEffect(() => {
@@ -390,7 +483,6 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
         const isCmdOrCtrl = e.metaKey || e.ctrlKey;
         const isShift = e.shiftKey;
 
-        // Object movement
         if (selectedObjectIds.length > 0 && e.key.startsWith('Arrow')) {
             e.preventDefault();
             const amount = isShift ? 10 : 1;
@@ -402,9 +494,7 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
             if (e.key === 'ArrowRight') dx = amount;
             
             updateSelectedObjects(obj => ({ x: obj.x + dx, y: obj.y + dy }));
-            // Debounced history update
-            const timer = setTimeout(() => onPresentationChange(presentation, true), 500);
-            return () => clearTimeout(timer);
+            debouncedHistoryUpdate();
         }
 
         if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -425,10 +515,10 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-   }, [selectedObjectIds, handleCopy, handleCut, handlePaste, handleDuplicate, deleteObjects, onUndo, onRedo, presentation, onPresentationChange]);
+   }, [selectedObjectIds, handleCopy, handleCut, handlePaste, handleDuplicate, deleteObjects, onUndo, onRedo, debouncedHistoryUpdate, updateSelectedObjects]);
 
 
-  const handleObjectContextMenu = (e: ReactMouseEvent, object: SlideObject) => {
+  const handleObjectContextMenu = (e: React.MouseEvent, object: SlideObject) => {
       e.preventDefault();
       e.stopPropagation();
       if (!selectedObjectIds.includes(object.id)) {
@@ -439,19 +529,19 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
           y: e.clientY,
           isVisible: true,
           items: [
-              { label: 'Copy', icon: CopyIcon, action: handleCopy, shortcut: '⌘C' },
-              { label: 'Cut', icon: CutIcon, action: handleCut, shortcut: '⌘X' },
-              { label: 'Paste', icon: PasteIcon, action: handlePaste, disabled: !clipboard, shortcut: '⌘V' },
-              { label: 'Duplicate', icon: DuplicateIcon, action: handleDuplicate, shortcut: '⌘D' },
-              { label: 'Delete', icon: TrashIcon, action: () => deleteObjects(selectedObjectIds), shortcut: 'Del' },
-              { isSeparator: true, label: '', icon: () => null, action: () => {} },
-              { label: 'Bring Forward', icon: BringForwardIcon, action: () => changeLayer(1) },
-              { label: 'Send Backward', icon: SendBackwardIcon, action: () => changeLayer(-1) },
+              { label: 'Copy', action: handleCopy, shortcut: '⌘C' },
+              { label: 'Cut', action: handleCut, shortcut: '⌘X' },
+              { label: 'Paste', action: handlePaste, disabled: !clipboard, shortcut: '⌘V' },
+              { label: 'Duplicate', action: handleDuplicate, shortcut: '⌘D' },
+              { label: 'Delete', action: () => deleteObjects(selectedObjectIds), shortcut: 'Del' },
+              { isSeparator: true, label: '', action: () => {} },
+              { label: 'Bring Forward', action: () => changeLayer(1) },
+              { label: 'Send Backward', action: () => changeLayer(-1) },
           ]
       });
   };
 
-  const handleCanvasContextMenu = (e: ReactMouseEvent) => {
+  const handleCanvasContextMenu = (e: React.MouseEvent) => {
       e.preventDefault();
       onSelectObjects([]);
       setContextMenu({
@@ -459,10 +549,10 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
           y: e.clientY,
           isVisible: true,
           items: [
-              { label: 'Paste', icon: PasteIcon, action: handlePaste, disabled: !clipboard, shortcut: '⌘V' },
-              { isSeparator: true, label: '', icon: () => null, action: () => {} },
-              { label: 'Add Text Box', icon: AddTextIcon, action: addTextObject },
-              { label: 'Upload Image', icon: AddImageIcon, action: handleImageUpload },
+              { label: 'Paste', action: handlePaste, disabled: !clipboard, shortcut: '⌘V' },
+              { isSeparator: true, label: '', action: () => {} },
+              { label: 'Add Text Box', action: addTextObject },
+              { label: 'Upload Image', action: handleImageUpload },
           ]
       });
   };
@@ -474,7 +564,6 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
       }
       if (obj.type === 'image') {
           const c = obj.content as ImageContent;
-          // Fix: Added a safeguard to prevent crashes if `c.filters` is missing from the data.
           if (c.filters) {
               filterString += `brightness(${c.filters.brightness}%) contrast(${c.filters.contrast}%) saturate(${c.filters.saturate}%) grayscale(${c.filters.grayscale}%) sepia(${c.filters.sepia}%) blur(${c.filters.blur}px)`;
           }
@@ -488,7 +577,7 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
           transform: `rotate(${obj.rotation || 0}deg) scaleX(${scaleX}) scaleY(${scaleY})`,
           opacity: obj.opacity ?? 1,
           filter: filterString.trim() || 'none',
-          transition: 'all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)',
+          transition: interactionRef.current.mode !== 'idle' ? 'none' : 'all 0.1s',
       };
   };
 
@@ -558,76 +647,31 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
   if (!presentation || !selectedSlide) {
     return <div className="flex-1 flex items-center justify-center">Loading Presentation...</div>;
   }
-  
-  const ToolbarButton: React.FC<{onClick?: () => void, disabled?: boolean, children: React.ReactNode, title?: string}> = ({onClick, disabled, children, title}) => (
-      <button onClick={onClick} disabled={disabled} title={title} className="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed">
+
+  const ToolbarButton: React.FC<{onClick?: () => void, children: React.ReactNode, title?: string}> = ({onClick, children, title}) => (
+      <button onClick={onClick} title={title} className="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">
           {children}
       </button>
   );
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-gray-200 dark:bg-gray-900">
-       <div className="flex items-center space-x-1 p-1 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-wrap">
-         <ToolbarButton onClick={onUndo} disabled={!canUndo} title="Undo (Ctrl+Z)"><UndoIcon className="w-5 h-5" /></ToolbarButton>
-         <ToolbarButton onClick={onRedo} disabled={!canRedo} title="Redo (Ctrl+Y)"><RedoIcon className="w-5 h-5" /></ToolbarButton>
-         <div className="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-1" />
-         <ToolbarButton onClick={addSlide} title="Add Slide"><AddSlideIcon className="w-5 h-5" /></ToolbarButton>
-         <ToolbarButton onClick={addTextObject} title="Add Text"><AddTextIcon className="w-5 h-5" /></ToolbarButton>
-         <div ref={shapesButtonRef} className="relative">
-            <ToolbarButton onClick={() => setIsShapesMenuOpen(p => !p)} title="Add Shape"><ShapesIcon className="w-5 h-5" /></ToolbarButton>
-            {isShapesMenuOpen && (
-                <div className="absolute top-full mt-2 left-0 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-lg z-20 w-72 p-2">
-                    {shapeCategories.map(category => (
-                        <div key={category.name}>
-                            <h4 className="text-xs font-bold uppercase text-gray-500 dark:text-gray-400 my-1 px-1">{category.name}</h4>
-                            <div className="grid grid-cols-6 gap-1">
-                                {category.shapes.map(shape => (
-                                    <button key={shape} onClick={() => addShapeObject(shape as ShapeType)} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-center">
-                                        <ShapeIcon shape={shape as ShapeType} />
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-         </div>
-         <ToolbarButton onClick={handleImageUpload} title="Add Image"><AddImageIcon className="w-5 h-5" /></ToolbarButton>
-         <input type="file" ref={imageInputRef} onChange={onImageFileChange} accept="image/*" className="hidden" />
-         <div className="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-1" />
-         <ToolbarButton onClick={() => deleteObjects(selectedObjectIds)} disabled={selectedObjectIds.length === 0} title="Delete"><TrashIcon className="w-5 h-5" /></ToolbarButton>
-         <ToolbarButton onClick={() => changeLayer(1)} disabled={selectedObjectIds.length === 0} title="Bring Forward"><BringForwardIcon className="w-5 h-5" /></ToolbarButton>
-         <ToolbarButton onClick={() => changeLayer(-1)} disabled={selectedObjectIds.length === 0} title="Send Backward"><SendBackwardIcon className="w-5 h-5" /></ToolbarButton>
-         <div className="flex-grow" />
-         <button onClick={onPresent} className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center gap-2">
-            <PresentIcon className="w-5 h-5" />
-            Present
-        </button>
-      </div>
-
        <div className="flex-1 flex overflow-hidden">
-        {/* Slides Panel */}
+        <input type="file" ref={imageInputRef} onChange={onImageFileChange} accept="image/*" className="hidden" />
         <div className="w-48 bg-gray-50 dark:bg-gray-800/50 p-2 overflow-y-auto border-r border-gray-200 dark:border-gray-700 space-y-2">
             {presentation.slides.map((slide, index) => (
                 <div key={slide.id} onClick={() => onSelectSlide(slide.id)} className={`aspect-video w-full rounded-md cursor-pointer border-2 ${selectedSlideId === slide.id ? 'border-blue-500' : 'border-transparent'}`}>
-                    <div className="w-full h-full bg-white shadow-sm p-1 flex items-center justify-center relative scale-100">
+                    <div className="w-full h-full bg-white shadow-sm p-1 flex items-center justify-center relative">
                         <span className="absolute top-1 left-1 text-xs text-gray-500">{index + 1}</span>
                          <div className="w-full h-full bg-white shadow-lg relative overflow-hidden" style={{ transform: 'scale(0.2)', transformOrigin: 'center center' }}>
                             <div className="absolute inset-0" style={{ backgroundColor: slide.background }}></div>
-                            {slide.objects.map(obj => (
-                                <div key={obj.id} className="absolute" style={getObjectStyle(obj)}>
-                                    {/* Simplified render for thumbnail */}
-                                </div>
-                            ))}
                         </div>
                     </div>
                 </div>
             ))}
         </div>
         
-        {/* Canvas */}
-        <div ref={canvasContainerRef} className="flex-1 flex items-center justify-center px-8 relative" onMouseDown={() => onSelectObjects([])} onContextMenu={handleCanvasContextMenu}>
-          <div ref={editorRef} className="w-[1280px] h-[720px] bg-white shadow-lg relative" style={{ transform: `scale(${scale})`, transformOrigin: 'center center' }}>
+        <div ref={canvasContainerRef} className="flex-1 flex items-center justify-center p-8 relative min-w-0" onMouseDown={() => onSelectObjects([])} onContextMenu={handleCanvasContextMenu}>
+          <div ref={editorRef} className="bg-white shadow-lg relative" style={{ width: `${slideWidth}px`, height: `${slideHeight}px`, transform: `scale(${scale})`, transformOrigin: 'center center' }}>
               <div className="absolute inset-0" style={{ backgroundColor: selectedSlide.background }}></div>
                 {selectedSlide.objects.map(obj => (
                     <div key={obj.id} 
@@ -660,3 +704,4 @@ export const PresentationEditor: React.FC<PresentationEditorProps> = ({
   );
 };
 
+export const PresentationEditor = forwardRef(PresentationEditorInternal);

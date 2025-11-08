@@ -203,6 +203,18 @@ export const EditIcon = ({ className }: { className?: string }) => (
     <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
 );
 export const MagicWandIcon = ({ className }: { className?: string }) => (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 3v4" />
+        <path d="M3 5h4" />
+        <path d="M19 17v4" />
+        <path d="M17 19h4" />
+        <path d="m22 2-2.5 2.5" />
+        <path d="m2 22 2.5-2.5" />
+        <path d="m14 6 3.5 3.5" />
+        <path d="M6 14l3.5 3.5" />
+    </svg>
+);
+export const AnimateMotionIcon = ({ className }: { className?: string }) => (
     <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 2.5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0V3.25a.75.75 0 01.75-.75zM12 17.25a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5a.75.75 0 01.75-.75zM5.394 6.813a.75.75 0 011.06-1.06l2.475 2.475a.75.75 0 01-1.06 1.06L5.394 6.813zM15.071 16.49a.75.75 0 011.06-1.06l2.475 2.475a.75.75 0 01-1.06 1.06l-2.475-2.475zM2.5 12a.75.75 0 01.75-.75h3.5a.75.75 0 010 1.5h-3.5A.75.75 0 012.5 12zM17.25 12a.75.75 0 01.75-.75h3.5a.75.75 0 010 1.5h-3.5a.75.75 0 01-.75-.75zM6.813 18.606a.75.75 0 01-1.06-1.06l2.475-2.475a.75.75 0 011.06 1.06l-2.475 2.475zM16.49 8.929a.75.75 0 01-1.06-1.06l2.475-2.475a.75.75 0 111.06 1.06l-2.475 2.475z" />
     </svg>
@@ -215,6 +227,15 @@ export const ZoomOutIcon = ({ className }: { className?: string }) => (
 );
 export const FitToScreenIcon = ({ className }: { className?: string }) => (
     <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M17 4h3v3h-2V5h-1V4zM4 4h3v1H5v2H4V4zm15 15v-2h2v3h-3v-1h1zM5 19h2v1H4v-3h1v2zM19 12h-2v2h2v-2zm-4 0h-2v2h2v-2zm-4 0H9v2h2v-2z"/></svg>
+);
+export const SlideSizeIcon = ({ className }: { className?: string }) => (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="7" width="18" height="10" rx="2" ry="2" />
+        <path d="M7 2v5" />
+        <path d="M17 2v5" />
+        <path d="M2 12h5" />
+        <path d="M17 12h5" />
+    </svg>
 );
 
 

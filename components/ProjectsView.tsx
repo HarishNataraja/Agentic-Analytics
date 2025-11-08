@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { Project } from '../types';
-import { AddSlideIcon, DataAnalysisIcon } from './icons';
+import { AddSlideIcon, DataAnalysisIcon, TrashIcon } from './icons';
 
 interface ProjectsViewProps {
   projects: Project[];
   onSelectProject: (projectId: string) => void;
   onCreateProject: (name: string) => void;
+  onDeleteProject: (projectId: string) => void;
 }
 
-const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, onSelectProject, onCreateProject }) => {
+const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, onSelectProject, onCreateProject, onDeleteProject }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
 
@@ -59,10 +60,20 @@ const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, onSelectProject, 
         ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {projects.map(project => (
-                    <div key={project.id} onClick={() => onSelectProject(project.id)} className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all">
+                    <div key={project.id} onClick={() => onSelectProject(project.id)} className="relative group bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all">
                         <DataAnalysisIcon className="w-8 h-8 text-blue-500 mb-3" />
                         <h3 className="font-bold text-lg truncate">{project.name}</h3>
                         <p className="text-sm text-gray-500 dark:text-gray-400">Created: {new Date(project.createdAt).toLocaleDateString()}</p>
+                         <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteProject(project.id);
+                            }}
+                            className="absolute top-2 right-2 p-1.5 rounded-full text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/50 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Delete project"
+                        >
+                            <TrashIcon className="w-5 h-5" />
+                        </button>
                     </div>
                 ))}
             </div>

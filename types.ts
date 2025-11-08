@@ -77,7 +77,7 @@ export interface Message {
   suggestions?: string[];
 }
 
-export type AspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+export type AspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | 'custom';
 
 export interface User {
   id: string;
@@ -362,7 +362,7 @@ export interface Project {
 // Editor-specific types
 export interface ContextMenuItem {
   label: string;
-  icon: React.FC<{ className?: string }>;
+  icon?: React.FC<{ className?: string }>;
   action: () => void;
   disabled?: boolean;
   isSeparator?: boolean;

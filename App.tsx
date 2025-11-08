@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import MessageInput from './components/MessageInput';
 import DashboardView from './components/dashboard/DashboardView';
@@ -35,6 +35,7 @@ const App: React.FC = () => {
   const [isThinkingMode, setIsThinkingMode] = useState(false);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
+  const [customDimensions, setCustomDimensions] = useState<{ width: number; height: number }>({ width: 1280, height: 720 });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [user, setUser] = useState<User | null>({ id: 'dev-user', email: 'developer@example.com' });
   
@@ -52,6 +53,18 @@ const App: React.FC = () => {
   const currentTranscriptionRef = useRef({ input: '', output: '' });
 
   const currentProject = projects.find(p => p.id === currentProjectId);
+
+  const slideDimensions = useMemo(() => {
+    const BASE_WIDTH = 1280;
+    if (aspectRatio === 'custom') {
+      return customDimensions;
+    }
+    if (aspectRatio === '4:3') {
+      return { width: BASE_WIDTH, height: BASE_WIDTH * 3 / 4 }; // 960
+    }
+    // Default to 16:9
+    return { width: BASE_WIDTH, height: BASE_WIDTH * 9 / 16 }; // 720
+  }, [aspectRatio, customDimensions]);
 
   useEffect(() => {
     localStorage.setItem('agentic_projects', JSON.stringify(projects));
@@ -86,6 +99,15 @@ const App: React.FC = () => {
       };
       setProjects(prev => [...prev, newProject]);
       setCurrentProjectId(newProject.id);
+  };
+
+  const handleDeleteProject = (projectId: string) => {
+    if (window.confirm("Are you sure you want to delete this project? This action cannot be undone.")) {
+        setProjects(prev => prev.filter(p => p.id !== projectId));
+        if (currentProjectId === projectId) {
+            setCurrentProjectId(null);
+        }
+    }
   };
   
   const handleGoToProjects = () => {
@@ -253,7 +275,7 @@ const App: React.FC = () => {
                     return;
                 }
                 updateBotMessage({ text: "Applying magic layout...", isLoading: false, isThinking: true });
-                const updatedSlide = await geminiService.layoutSlide(selectedSlide);
+                const updatedSlide = await geminiService.layoutSlide(selectedSlide, slideDimensions.width, slideDimensions.height);
                 const newSlidesForLayout = presentation.slides.map(s => s.id === selectedSlideId ? updatedSlide : s);
                 handleSetPresentation({ ...presentation, slides: newSlidesForLayout });
                 updateBotMessage({ isThinking: false, text: "Done! Here's the new layout." });
@@ -536,7 +558,7 @@ const App: React.FC = () => {
 
   const renderMainContent = () => {
     if (!currentProjectId || !currentProject) {
-        return <ProjectsView projects={projects} onSelectProject={handleSelectProject} onCreateProject={handleCreateProject} />
+        return <ProjectsView projects={projects} onSelectProject={handleSelectProject} onCreateProject={handleCreateProject} onDeleteProject={handleDeleteProject} />
     }
     
     switch(activeAgent) {
@@ -582,6 +604,12 @@ const App: React.FC = () => {
                             onPresent={() => setIsPresenting(true)}
                             messages={currentProject.presentationMessages}
                             onSendMessage={handleSendMessage}
+                            aspectRatio={aspectRatio}
+                            onAspectRatioChange={setAspectRatio}
+                            customDimensions={customDimensions}
+                            onCustomDimensionsChange={setCustomDimensions}
+                            slideWidth={slideDimensions.width}
+                            slideHeight={slideDimensions.height}
                             selectedSlideId={currentProject.selectedSlideId}
                             onSelectSlide={(id) => updateCurrentProject(p => ({ ...p, selectedSlideId: id }))}
                             selectedObjectIds={currentProject.selectedObjectIds}

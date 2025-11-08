@@ -46,7 +46,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
             disabled={item.disabled}
             className="w-full flex items-center px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-left"
           >
-            <Icon className="w-4 h-4 mr-3" />
+            {Icon && <Icon className="w-4 h-4 mr-3" />}
             <span className="flex-grow">{item.label}</span>
             {item.shortcut && <span className="text-xs text-gray-400">{item.shortcut}</span>}
           </button>

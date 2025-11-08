@@ -1,7 +1,7 @@
 // Fix: Import `LiveServerMessage` and `Blob` instead of `LiveSession` and `LiveSessionCallbacks`.
-import { GoogleGenAI, GenerateContentResponse, Modality, LiveServerMessage, Type, Blob, GenerationConfig, FunctionDeclaration, Image, Slide } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Modality, LiveServerMessage, Type, Blob, GenerationConfig, FunctionDeclaration, Image } from "@google/genai";
 // Fix: Import AIStudio from the central types file.
-import { AspectRatio, Presentation, SlideTransition, TextContent, ObjectAnimation, DashboardItem } from "../types";
+import { AspectRatio, Presentation, Slide, SlideTransition, TextContent, ObjectAnimation, DashboardItem } from "../types";
 
 // This is a browser-only app, so we can't use process.env.
 // The user will be prompted to provide their key for video generation.
@@ -560,11 +560,11 @@ export const understandPresentationPrompt = async (prompt: string, selectedImage
     return { type: 'presentation_edit' };
 };
 
-export const layoutSlide = async (slide: any): Promise<any> => {
+export const layoutSlide = async (slide: Slide, width: number, height: number): Promise<Slide> => {
     const ai = getAiClient();
     if (!ai) throw new Error("GoogleGenAI not initialized");
     
-    const objectsForPrompt = slide.objects.map((o: any) => ({
+    const objectsForPrompt = slide.objects.map((o) => ({
         id: o.id,
         type: o.type,
         width: o.width,
@@ -581,7 +581,7 @@ export const layoutSlide = async (slide: any): Promise<any> => {
 - **Proximity:** Group related items.
 - **Whitespace:** Use negative space effectively.
 
-**Canvas Dimensions:** The slide canvas is 1280px wide and 720px high. All coordinates and dimensions must be within these bounds. Objects should not overlap.`;
+**Canvas Dimensions:** The slide canvas is ${width}px wide and ${height}px high. All coordinates and dimensions must be within these bounds. Objects should not overlap.`;
     
     const fullPrompt = `Current slide objects:
 \`\`\`json
@@ -618,7 +618,7 @@ Based on the design principles, provide the new layout attributes for these obje
         const newLayouts = JSON.parse(response.text) as {id: string; x: number; y: number; width: number; height: number;}[];
         const layoutMap = new Map(newLayouts.map(l => [l.id, l]));
 
-        const updatedObjects = slide.objects.map((obj: any) => {
+        const updatedObjects = slide.objects.map((obj) => {
             const newLayout = layoutMap.get(obj.id);
             return newLayout ? { ...obj, ...newLayout } : obj;
         });
